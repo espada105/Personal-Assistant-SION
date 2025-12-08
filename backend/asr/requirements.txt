@@ -1,0 +1,22 @@
+# FastAPI & Server
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+
+# ASR Model - Whisper
+openai-whisper==20231117
+# Alternative: faster-whisper for optimized inference
+# faster-whisper==0.10.0
+
+# Audio Processing
+librosa==0.10.1
+soundfile==0.12.1
+numpy==1.26.2
+
+# Utilities
+pydantic==2.5.0
+python-dotenv==1.0.0
+
+# Logging & Monitoring
+structlog==23.2.0
+
