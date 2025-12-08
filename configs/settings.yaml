@@ -1,0 +1,108 @@
+# SION Personal Assistant - Configuration Settings
+
+# 애플리케이션 설정
+app:
+  name: "SION Personal Assistant"
+  version: "0.1.0"
+  debug: false
+
+# 서비스 엔드포인트 (Docker Compose 환경)
+services:
+  asr:
+    host: "asr-service"
+    port: 8000
+    timeout: 30
+  nlu:
+    host: "nlu-service"
+    port: 8000
+    timeout: 10
+  task_executor:
+    host: "task-executor"
+    port: 8000
+    timeout: 60
+
+# AWS 서비스 엔드포인트 (Production)
+aws:
+  api_gateway:
+    base_url: "https://api.sion.example.com"
+    stage: "prod"
+
+# ASR 모델 설정
+asr:
+  model:
+    name: "base"  # tiny, base, small, medium, large
+    device: "auto"  # auto, cpu, cuda
+    language: "ko"
+  audio:
+    sample_rate: 16000
+    channels: 1
+    max_duration: 10.0
+    silence_threshold: 0.01
+    silence_duration: 1.5
+
+# NLU 설정
+nlu:
+  model:
+    name: "klue/bert-base"
+    device: "auto"
+  intent:
+    confidence_threshold: 0.5
+    fallback_intent: "llm_chat"
+
+# Task Executor 설정
+task_executor:
+  llm:
+    model: "gpt-3.5-turbo"
+    max_tokens: 1000
+    temperature: 0.7
+  email:
+    enabled: true
+    check_interval: 300  # 초
+  calendar:
+    enabled: true
+    default_timezone: "Asia/Seoul"
+    default_duration: 60  # 분
+
+# 로깅 설정
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file:
+    enabled: true
+    path: "./logs"
+    max_size: "10MB"
+    backup_count: 5
+
+# 핫키 설정
+hotkeys:
+  activate: "ctrl+shift+s"
+  cancel: "escape"
+  push_to_talk: "ctrl+space"
+
+# 지원하는 의도 목록
+intents:
+  - name: "schedule_check"
+    description: "일정 확인"
+    handler: "calendar"
+  - name: "schedule_add"
+    description: "일정 추가"
+    handler: "calendar"
+  - name: "email_check"
+    description: "이메일 확인"
+    handler: "email"
+  - name: "email_send"
+    description: "이메일 전송"
+    handler: "email"
+  - name: "llm_chat"
+    description: "일반 대화"
+    handler: "llm"
+  - name: "web_search"
+    description: "웹 검색"
+    handler: "llm"
+  - name: "file_search"
+    description: "파일 검색"
+    handler: "local"
+  - name: "app_open"
+    description: "앱 실행"
+    handler: "local"
+
