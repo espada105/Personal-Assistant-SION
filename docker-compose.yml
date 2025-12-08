@@ -1,0 +1,96 @@
+version: '3.8'
+
+services:
+  # ASR (Automatic Speech Recognition) Service
+  asr-service:
+    build:
+      context: ./backend/asr
+      dockerfile: Dockerfile
+    container_name: sion-asr
+    ports:
+      - "8001:8000"
+    volumes:
+      - ./backend/asr/models:/app/models
+      - ./logs/asr:/app/logs
+    environment:
+      - MODEL_PATH=/app/models
+      - LOG_LEVEL=INFO
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # NLU (Natural Language Understanding) Service
+  nlu-service:
+    build:
+      context: ./backend/nlu
+      dockerfile: Dockerfile
+    container_name: sion-nlu
+    ports:
+      - "8002:8000"
+    volumes:
+      - ./backend/nlu/models:/app/models
+      - ./logs/nlu:/app/logs
+    environment:
+      - MODEL_PATH=/app/models
+      - LOG_LEVEL=INFO
+    depends_on:
+      - asr-service
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # Task Executor Service
+  task-executor:
+    build:
+      context: ./backend/task_executor
+      dockerfile: Dockerfile
+    container_name: sion-task-executor
+    ports:
+      - "8003:8000"
+    volumes:
+      - ./backend/task_executor/config:/app/config
+      - ./logs/task_executor:/app/logs
+    environment:
+      - LOG_LEVEL=INFO
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GOOGLE_CREDENTIALS_PATH=/app/config/google_credentials.json
+    env_file:
+      - ./configs/.env
+    depends_on:
+      - asr-service
+      - nlu-service
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # API Gateway (Optional - for local development)
+  # nginx:
+  #   image: nginx:alpine
+  #   container_name: sion-gateway
+  #   ports:
+  #     - "80:80"
+  #   volumes:
+  #     - ./configs/nginx.conf:/etc/nginx/nginx.conf:ro
+  #   depends_on:
+  #     - asr-service
+  #     - nlu-service
+  #     - task-executor
+
+networks:
+  default:
+    name: sion-network
+    driver: bridge
+
+volumes:
+  model-data:
+  log-data:
+
