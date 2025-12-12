@@ -19,6 +19,15 @@ try:
 except ImportError:
     GOOGLE_AVAILABLE = False
 
+# OpenAI 임포트
+try:
+    from openai import OpenAI
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(PROJECT_ROOT, "configs", ".env"))
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+
 # 프로젝트 루트 경로
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -338,6 +347,10 @@ class SionApp(ctk.CTk):
             elif intent == "email_check":
                 return self.handle_email_check()
         
+        # LLM 대화 처리
+        if intent == "llm_chat" or intent == "web_search":
+            return self.handle_llm_chat(original_message)
+        
         # 기본 응답
         responses = {
             "schedule_check": "📅 일정을 확인하려면 Google 인증이 필요합니다.\n\n메뉴에서 'Google 로그인'을 클릭해주세요.",
@@ -451,6 +464,42 @@ class SionApp(ctk.CTk):
             
         except Exception as e:
             return f"📧 이메일 확인 중 오류가 발생했습니다.\n\n오류: {str(e)}\n\n'Google 로그인' 버튼을 클릭해주세요."
+    
+    def handle_llm_chat(self, message: str) -> str:
+        """LLM 대화 처리"""
+        if not OPENAI_AVAILABLE:
+            return "💬 OpenAI 라이브러리가 설치되지 않았습니다."
+        
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key or api_key == "여기에-API-키-입력":
+            return "💬 OpenAI API 키가 설정되지 않았습니다.\n\nconfigs/.env 파일에 OPENAI_API_KEY를 입력해주세요."
+        
+        try:
+            client = OpenAI(api_key=api_key)
+            
+            response = client.chat.completions.create(
+                model=os.getenv("OPENAI_MODEL", "gpt-4"),
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "당신은 SION이라는 친절한 개인 비서 AI입니다. 한국어로 간결하고 도움이 되는 답변을 해주세요."
+                    },
+                    {
+                        "role": "user",
+                        "content": message
+                    }
+                ],
+                max_tokens=500,
+                temperature=0.7
+            )
+            
+            return f"💬 {response.choices[0].message.content}"
+            
+        except Exception as e:
+            error_msg = str(e)
+            if "api_key" in error_msg.lower():
+                return "❌ OpenAI API 키가 유효하지 않습니다.\n\nconfigs/.env 파일을 확인해주세요."
+            return f"❌ GPT 응답 오류: {error_msg}"
     
     def format_entities(self, entities: list) -> str:
         """엔티티 포맷팅"""
