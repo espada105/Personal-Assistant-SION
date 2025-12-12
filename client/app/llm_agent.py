@@ -51,7 +51,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "add_calendar_event",
-            "description": "새로운 일정을 추가합니다. 예: '내일 3시에 회의', '금요일 오후 2시 미팅 잡아줘'",
+            "description": "새로운 일정을 추가합니다. 하루 또는 여러 날에 걸친 일정 모두 가능. 예: '내일 3시에 회의', '12/11부터 12/13까지 출장'",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -59,21 +59,30 @@ TOOLS = [
                         "type": "string",
                         "description": "일정 제목"
                     },
-                    "date": {
+                    "start_date": {
                         "type": "string",
-                        "description": "날짜. 'today', 'tomorrow', 또는 'YYYY-MM-DD' 형식"
+                        "description": "시작 날짜. 'today', 'tomorrow', 또는 'YYYY-MM-DD' 형식 (예: '2024-12-11')"
+                    },
+                    "end_date": {
+                        "type": "string",
+                        "description": "종료 날짜 (여러 날 일정인 경우). 'YYYY-MM-DD' 형식. 하루 일정이면 생략"
                     },
                     "time": {
                         "type": "string",
-                        "description": "시간. 'HH:MM' 24시간 형식 (예: '15:00')"
+                        "description": "시작 시간. 'HH:MM' 24시간 형식 (예: '15:00'). 종일 일정이면 생략"
                     },
                     "duration": {
                         "type": "integer",
-                        "description": "일정 길이 (분 단위). 기본값 60",
+                        "description": "일정 길이 (분 단위). 기본값 60. 종일 일정이면 생략",
                         "default": 60
+                    },
+                    "is_all_day": {
+                        "type": "boolean",
+                        "description": "종일 일정 여부. 기간 일정(여러 날)은 보통 종일 일정",
+                        "default": false
                     }
                 },
-                "required": ["title", "date", "time"]
+                "required": ["title", "start_date"]
             }
         }
     },
@@ -271,7 +280,7 @@ class LLMAgent:
             return f"📅 일정 확인 오류: {str(e)}"
     
     def _add_calendar_event(self, args: Dict[str, Any]) -> str:
-        """일정 추가"""
+        """일정 추가 (단일/기간 일정 지원)"""
         if not GOOGLE_AVAILABLE:
             return "📅 Google 캘린더가 연결되지 않았습니다."
         
@@ -279,38 +288,88 @@ class LLMAgent:
             calendar = get_calendar_service()
             
             title = args.get("title", "새 일정")
-            date_str = args.get("date", "today")
-            time_str = args.get("time", "09:00")
+            start_date_str = args.get("start_date", args.get("date", "today"))
+            end_date_str = args.get("end_date")
+            time_str = args.get("time")
             duration = args.get("duration", 60)
+            is_all_day = args.get("is_all_day", False)
             
-            # 날짜 파싱
-            if date_str == "today":
-                event_date = datetime.now()
-            elif date_str == "tomorrow":
-                event_date = datetime.now() + timedelta(days=1)
+            # 시작 날짜 파싱
+            start_date = self._parse_date(start_date_str)
+            
+            # 종료 날짜가 있으면 기간 일정 (종일 일정으로 처리)
+            if end_date_str:
+                end_date = self._parse_date(end_date_str)
+                # 종료 날짜는 다음 날까지 포함 (Google Calendar 종일 이벤트 특성)
+                end_date = end_date + timedelta(days=1)
+                
+                result = calendar.create_all_day_event(title, start_date, end_date)
+                
+                if result:
+                    return f"✅ 일정이 추가되었습니다!\n\n📅 {title}\n📆 {start_date.strftime('%Y-%m-%d')} ~ {(end_date - timedelta(days=1)).strftime('%Y-%m-%d')}"
+                else:
+                    return "❌ 일정 추가에 실패했습니다."
+            
+            # 종일 일정
+            elif is_all_day or not time_str:
+                result = calendar.create_all_day_event(title, start_date)
+                
+                if result:
+                    return f"✅ 일정이 추가되었습니다!\n\n📅 {title}\n📆 {start_date.strftime('%Y-%m-%d')} (종일)"
+                else:
+                    return "❌ 일정 추가에 실패했습니다."
+            
+            # 시간 지정 일정
             else:
                 try:
-                    event_date = datetime.strptime(date_str, "%Y-%m-%d")
+                    hour, minute = map(int, time_str.split(":"))
                 except:
-                    event_date = datetime.now()
-            
-            # 시간 파싱
-            try:
-                hour, minute = map(int, time_str.split(":"))
-            except:
-                hour, minute = 9, 0
-            
-            start_time = event_date.replace(hour=hour, minute=minute, second=0, microsecond=0)
-            
-            result = calendar.create_event(title, start_time, duration)
-            
-            if result:
-                return f"✅ 일정이 추가되었습니다!\n\n📅 {title}\n🕐 {start_time.strftime('%Y-%m-%d %H:%M')}"
-            else:
-                return "❌ 일정 추가에 실패했습니다."
+                    hour, minute = 9, 0
+                
+                start_time = start_date.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                result = calendar.create_event(title, start_time, duration)
+                
+                if result:
+                    return f"✅ 일정이 추가되었습니다!\n\n📅 {title}\n🕐 {start_time.strftime('%Y-%m-%d %H:%M')}"
+                else:
+                    return "❌ 일정 추가에 실패했습니다."
             
         except Exception as e:
             return f"📅 일정 추가 오류: {str(e)}"
+    
+    def _parse_date(self, date_str: str) -> datetime:
+        """날짜 문자열 파싱"""
+        if not date_str:
+            return datetime.now()
+        
+        date_str = date_str.lower().strip()
+        
+        if date_str == "today":
+            return datetime.now()
+        elif date_str == "tomorrow":
+            return datetime.now() + timedelta(days=1)
+        else:
+            # 다양한 형식 시도
+            formats = [
+                "%Y-%m-%d",      # 2024-12-11
+                "%Y/%m/%d",      # 2024/12/11
+                "%m/%d",         # 12/11
+                "%m-%d",         # 12-11
+                "%d일",          # 11일
+            ]
+            
+            for fmt in formats:
+                try:
+                    parsed = datetime.strptime(date_str, fmt)
+                    # 연도가 없으면 현재 연도 사용
+                    if parsed.year == 1900:
+                        parsed = parsed.replace(year=datetime.now().year)
+                    return parsed
+                except:
+                    continue
+            
+            # 파싱 실패시 현재 날짜
+            return datetime.now()
     
     def _update_calendar_event(self, args: Dict[str, Any]) -> str:
         """일정 수정"""

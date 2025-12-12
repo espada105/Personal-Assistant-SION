@@ -183,6 +183,45 @@ class CalendarService:
             print(f"[Calendar] 일정 생성 실패: {e}")
             return None
     
+    def create_all_day_event(self, title: str, start_date: datetime, 
+                              end_date: datetime = None, location: str = "") -> Optional[Dict]:
+        """종일 일정 생성 (단일/기간)"""
+        if not self.service:
+            if not self.connect():
+                return None
+        
+        try:
+            # 종료 날짜가 없으면 하루 일정
+            if end_date is None:
+                end_date = start_date + timedelta(days=1)
+            
+            event = {
+                'summary': title,
+                'location': location,
+                'start': {
+                    'date': start_date.strftime('%Y-%m-%d'),  # 종일 이벤트는 date만 사용
+                },
+                'end': {
+                    'date': end_date.strftime('%Y-%m-%d'),
+                },
+            }
+            
+            created_event = self.service.events().insert(
+                calendarId='primary', body=event
+            ).execute()
+            
+            return {
+                'id': created_event['id'],
+                'title': title,
+                'start': start_date.strftime('%Y-%m-%d'),
+                'end': end_date.strftime('%Y-%m-%d'),
+                'link': created_event.get('htmlLink', '')
+            }
+            
+        except Exception as e:
+            print(f"[Calendar] 종일 일정 생성 실패: {e}")
+            return None
+    
     def update_event(self, event_id: str, title: str = None, 
                      start_time: datetime = None, duration_minutes: int = None) -> Optional[Dict]:
         """일정 수정"""
