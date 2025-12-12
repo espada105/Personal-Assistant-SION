@@ -161,3 +161,9 @@ tmp/
 temp/
 *.tmp
 
+
+
+# Google API Credentials
+configs/google_credentials.json
+client_secret*.json
+token.json
