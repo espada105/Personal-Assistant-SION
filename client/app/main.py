@@ -10,7 +10,14 @@ import sys
 import os
 import time
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
+
+# Google Services 임포트
+try:
+    from .google_services import get_auth_manager, get_calendar_service, get_gmail_service
+    GOOGLE_AVAILABLE = True
+except ImportError:
+    GOOGLE_AVAILABLE = False
 
 # 프로젝트 루트 경로
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -162,6 +169,20 @@ class SionApp(ctk.CTk):
         )
         title_label.grid(row=0, column=0, padx=20, pady=15)
         
+        # Google 로그인 버튼
+        self.google_btn = ctk.CTkButton(
+            header_frame,
+            text="🔗 Google 로그인",
+            width=120,
+            height=30,
+            font=("맑은 고딕", 11),
+            fg_color="#DB4437",
+            hover_color="#C53929",
+            corner_radius=15,
+            command=self.google_login
+        )
+        self.google_btn.grid(row=0, column=1, padx=10, pady=15, sticky="e")
+        
         # 상태 표시
         self.status_label = ctk.CTkLabel(
             header_frame,
@@ -169,7 +190,7 @@ class SionApp(ctk.CTk):
             font=("맑은 고딕", 11),
             text_color="#888888"
         )
-        self.status_label.grid(row=0, column=1, padx=20, pady=15, sticky="e")
+        self.status_label.grid(row=0, column=2, padx=20, pady=15, sticky="e")
         
         # === 채팅 영역 ===
         chat_container = ctk.CTkFrame(self, fg_color="#2B2B2B")
@@ -307,18 +328,129 @@ class SionApp(ctk.CTk):
     
     def generate_response(self, intent: str, entities: list, original_message: str) -> str:
         """의도에 따른 응답 생성"""
+        
+        # Google API 사용 가능 여부 확인
+        if GOOGLE_AVAILABLE:
+            if intent == "schedule_check":
+                return self.handle_schedule_check(entities)
+            elif intent == "schedule_add":
+                return self.handle_schedule_add(entities, original_message)
+            elif intent == "email_check":
+                return self.handle_email_check()
+        
+        # 기본 응답
         responses = {
-            "schedule_check": "📅 일정을 확인하고 있습니다...\n\n(일정 API 연동 필요)",
-            "schedule_add": f"📅 일정을 추가하겠습니다.\n\n감지된 정보:\n{self.format_entities(entities)}\n\n(캘린더 API 연동 필요)",
-            "schedule_delete": "📅 일정을 삭제하겠습니다.\n\n(캘린더 API 연동 필요)",
-            "email_check": "📧 이메일을 확인하고 있습니다...\n\n(이메일 API 연동 필요)",
-            "email_send": "📧 이메일을 전송하겠습니다.\n\n(이메일 API 연동 필요)",
+            "schedule_check": "📅 일정을 확인하려면 Google 인증이 필요합니다.\n\n메뉴에서 'Google 로그인'을 클릭해주세요.",
+            "schedule_add": f"📅 일정을 추가하겠습니다.\n\n감지된 정보:\n{self.format_entities(entities)}\n\n(Google 인증 필요)",
+            "schedule_delete": "📅 일정을 삭제하겠습니다.\n\n(Google 인증 필요)",
+            "email_check": "📧 이메일을 확인하려면 Google 인증이 필요합니다.\n\n메뉴에서 'Google 로그인'을 클릭해주세요.",
+            "email_send": "📧 이메일을 전송하겠습니다.\n\n(Google 인증 필요)",
             "web_search": f"🔍 '{original_message}'에 대해 검색하고 있습니다...\n\n(검색 API 연동 필요)",
             "weather_check": "🌤️ 날씨를 확인하고 있습니다...\n\n(날씨 API 연동 필요)",
             "llm_chat": f"💬 질문을 이해했습니다.\n\n'{original_message}'\n\n(LLM API 연동 필요 - OpenAI API 키 설정 시 실제 응답 가능)",
         }
         
         return responses.get(intent, f"🤔 '{intent}' 의도로 분류되었습니다.\n\n아직 해당 기능이 구현되지 않았습니다.")
+    
+    def handle_schedule_check(self, entities: list) -> str:
+        """일정 확인 처리"""
+        try:
+            calendar = get_calendar_service()
+            
+            # 날짜 엔티티 확인
+            date_entity = next((e['value'] for e in entities if e['type'] == 'date'), None)
+            
+            if date_entity and '내일' in date_entity:
+                events = calendar.get_tomorrow_events()
+                date_str = "내일"
+            else:
+                events = calendar.get_today_events()
+                date_str = "오늘"
+            
+            if not events:
+                return f"📅 {date_str} 일정이 없습니다."
+            
+            response = f"📅 {date_str} 일정 ({len(events)}개):\n\n"
+            for event in events:
+                time_str = event['start']
+                if 'T' in time_str:
+                    time_str = time_str.split('T')[1][:5]
+                response += f"• {time_str} - {event['title']}\n"
+                if event['location']:
+                    response += f"  📍 {event['location']}\n"
+            
+            return response
+            
+        except Exception as e:
+            return f"📅 일정 확인 중 오류가 발생했습니다.\n\n오류: {str(e)}\n\n'Google 로그인' 버튼을 클릭해주세요."
+    
+    def handle_schedule_add(self, entities: list, original_message: str) -> str:
+        """일정 추가 처리"""
+        try:
+            # 엔티티에서 정보 추출
+            date_entity = next((e['value'] for e in entities if e['type'] == 'date'), None)
+            time_entity = next((e['value'] for e in entities if e['type'] == 'time'), None)
+            
+            # 간단한 파싱 (실제로는 더 정교한 파싱 필요)
+            now = datetime.now()
+            
+            if date_entity and '내일' in date_entity:
+                event_date = now + timedelta(days=1)
+            else:
+                event_date = now
+            
+            # 시간 파싱
+            hour = 9  # 기본값
+            if time_entity:
+                if '오후' in time_entity:
+                    hour = 12
+                import re
+                numbers = re.findall(r'\d+', time_entity)
+                if numbers:
+                    hour = int(numbers[0])
+                    if '오후' in time_entity and hour < 12:
+                        hour += 12
+            
+            start_time = event_date.replace(hour=hour, minute=0, second=0, microsecond=0)
+            
+            # 제목 추출 (간단한 방식)
+            title = "새 일정"
+            if '회의' in original_message:
+                title = "회의"
+            elif '미팅' in original_message:
+                title = "미팅"
+            elif '약속' in original_message:
+                title = "약속"
+            
+            calendar = get_calendar_service()
+            result = calendar.create_event(title, start_time)
+            
+            if result:
+                return f"✅ 일정이 추가되었습니다!\n\n📅 {title}\n🕐 {start_time.strftime('%Y-%m-%d %H:%M')}"
+            else:
+                return "❌ 일정 추가에 실패했습니다. Google 로그인을 확인해주세요."
+            
+        except Exception as e:
+            return f"📅 일정 추가 중 오류가 발생했습니다.\n\n오류: {str(e)}"
+    
+    def handle_email_check(self) -> str:
+        """이메일 확인 처리"""
+        try:
+            gmail = get_gmail_service()
+            emails = gmail.get_unread_emails(5)
+            
+            if not emails:
+                return "📧 읽지 않은 이메일이 없습니다."
+            
+            response = f"📧 읽지 않은 이메일 ({len(emails)}개):\n\n"
+            for email in emails:
+                sender = email['from'].split('<')[0].strip()
+                response += f"• {sender}\n  {email['subject'][:40]}...\n\n"
+            
+            return response
+            
+        except Exception as e:
+            return f"📧 이메일 확인 중 오류가 발생했습니다.\n\n오류: {str(e)}\n\n'Google 로그인' 버튼을 클릭해주세요."
     
     def format_entities(self, entities: list) -> str:
         """엔티티 포맷팅"""
@@ -329,6 +461,43 @@ class SionApp(ctk.CTk):
         for e in entities:
             lines.append(f"- {e['type']}: {e['value']}")
         return "\n".join(lines)
+    
+    def google_login(self):
+        """Google 로그인"""
+        if not GOOGLE_AVAILABLE:
+            self.add_message("❌ Google 서비스를 사용할 수 없습니다.", is_user=False)
+            return
+        
+        def do_login():
+            try:
+                auth_manager = get_auth_manager()
+                
+                self.after(0, lambda: self.add_message(
+                    "🔗 Google 로그인 중...\n브라우저에서 로그인을 완료해주세요.",
+                    is_user=False
+                ))
+                
+                if auth_manager.authenticate():
+                    self.after(0, lambda: self.add_message(
+                        "✅ Google 로그인 성공!\n\n이제 일정과 이메일을 확인할 수 있습니다.",
+                        is_user=False
+                    ))
+                    self.after(0, lambda: self.google_btn.configure(
+                        text="✅ 로그인됨",
+                        fg_color="#4CAF50"
+                    ))
+                else:
+                    self.after(0, lambda: self.add_message(
+                        "❌ Google 로그인에 실패했습니다.",
+                        is_user=False
+                    ))
+            except Exception as e:
+                self.after(0, lambda: self.add_message(
+                    f"❌ 로그인 오류: {str(e)}",
+                    is_user=False
+                ))
+        
+        threading.Thread(target=do_login, daemon=True).start()
     
     def on_closing(self):
         """앱 종료 시"""
