@@ -1,14 +1,19 @@
-# 🤖 Personal Assistant SION
-
+# Personal Assistant SION
 Docker와 AWS를 활용한 AI 기반 개인 비서 시스템
 
-## 📋 프로젝트 개요
+![시온](https://github.com/user-attachments/assets/2d27bbf8-e70e-4a0f-a4f9-92d44270b56f)
+
+
+
+
+
+##  프로젝트 개요
 
 로컬 데스크톱 앱(GUI, Hotkey)과 클라우드 기반 AI 서비스를 결합한 개인 비서 시스템입니다.
 - **로컬**: C++ Hotkey 모듈, Python GUI 클라이언트
 - **클라우드**: ASR(음성인식), NLU(자연어이해), Task Execution 서비스
 
-## 🏗️ 아키텍처
+##  아키텍처
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -36,7 +41,7 @@ Docker와 AWS를 활용한 AI 기반 개인 비서 시스템
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-## 📁 프로젝트 구조
+##  프로젝트 구조
 
 ```
 Personal-Assistant-SION/
@@ -58,7 +63,6 @@ Personal-Assistant-SION/
 └── docs/                 # 문서
 ```
 
-## 🚀 시작하기
 
 ### 사전 요구사항
 
@@ -119,21 +123,11 @@ docker-compose up task-executor
 | **클라우드** | AWS (EC2, ECR, S3, Lambda, API Gateway) |
 | **IaC** | AWS CloudFormation |
 
-## 📊 주요 기능
+##  주요 기능
 
-- 🎤 **음성 인식 (ASR)**: Whisper 모델 기반 한국어 음성 인식
-- 🧠 **의도 분류 (NLU)**: 사용자 발화 의도 및 엔티티 추출
-- 📧 **이메일 관리**: Gmail API 연동 이메일 확인/발송
-- 📅 **일정 관리**: Google Calendar API 연동
-- 💬 **LLM 질의**: OpenAI API를 통한 자연어 대화
-- 📁 **파일 탐색**: 로컬 파일 시스템 탐색 및 관리
-
-## 📝 라이선스
-
-MIT License
-
-## 👤 Author
-
-SION Project Team
-
-
+-  **음성 인식 (ASR)**: Whisper 모델 기반 한국어 음성 인식
+-  **의도 분류 (NLU)**: 사용자 발화 의도 및 엔티티 추출
+-  **이메일 관리**: Gmail API 연동 이메일 확인/발송
+-  **일정 관리**: Google Calendar API 연동
+-  **LLM 질의**: OpenAI API를 통한 자연어 대화
+-  **파일 탐색**: 로컬 파일 시스템 탐색 및 관리
