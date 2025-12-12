@@ -80,6 +80,52 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "update_calendar_event",
+            "description": "기존 일정을 수정합니다. 예: '3시 회의를 4시로 변경해줘', '미팅 제목을 바꿔줘'",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "search_query": {
+                        "type": "string",
+                        "description": "수정할 일정을 찾기 위한 검색어 (일정 제목)"
+                    },
+                    "new_title": {
+                        "type": "string",
+                        "description": "새로운 일정 제목 (변경할 경우)"
+                    },
+                    "new_date": {
+                        "type": "string",
+                        "description": "새로운 날짜. 'today', 'tomorrow', 또는 'YYYY-MM-DD' 형식"
+                    },
+                    "new_time": {
+                        "type": "string",
+                        "description": "새로운 시간. 'HH:MM' 24시간 형식 (예: '16:00')"
+                    }
+                },
+                "required": ["search_query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_calendar_event",
+            "description": "일정을 삭제/취소합니다. 예: '내일 미팅 취소해줘', '회의 일정 삭제해줘'",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "search_query": {
+                        "type": "string",
+                        "description": "삭제할 일정을 찾기 위한 검색어 (일정 제목)"
+                    }
+                },
+                "required": ["search_query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "check_email",
             "description": "읽지 않은 이메일을 확인합니다. 예: '새 메일 있어?', '이메일 확인해줘', '오늘 온 메일'",
             "parameters": {
@@ -105,7 +151,9 @@ SYSTEM_PROMPT = """당신은 SION이라는 친절한 개인 비서 AI입니다.
 사용 가능한 기능:
 1. 일정 확인 - 오늘/내일/특정 날짜의 캘린더 일정 확인
 2. 일정 추가 - 새로운 일정을 캘린더에 추가
-3. 이메일 확인 - 읽지 않은 이메일 확인
+3. 일정 수정 - 기존 일정의 시간이나 제목 변경
+4. 일정 삭제 - 일정 취소/삭제
+5. 이메일 확인 - 읽지 않은 이메일 확인
 
 일정이나 이메일 관련 요청이면 반드시 해당 함수를 호출하세요.
 그 외의 일반적인 질문에는 직접 답변해주세요.
@@ -174,6 +222,10 @@ class LLMAgent:
                 result = self._check_calendar(func_args)
             elif func_name == "add_calendar_event":
                 result = self._add_calendar_event(func_args)
+            elif func_name == "update_calendar_event":
+                result = self._update_calendar_event(func_args)
+            elif func_name == "delete_calendar_event":
+                result = self._delete_calendar_event(func_args)
             elif func_name == "check_email":
                 result = self._check_email(func_args)
             else:
@@ -259,6 +311,103 @@ class LLMAgent:
             
         except Exception as e:
             return f"📅 일정 추가 오류: {str(e)}"
+    
+    def _update_calendar_event(self, args: Dict[str, Any]) -> str:
+        """일정 수정"""
+        if not GOOGLE_AVAILABLE:
+            return "📅 Google 캘린더가 연결되지 않았습니다."
+        
+        try:
+            calendar = get_calendar_service()
+            search_query = args.get("search_query", "")
+            
+            # 일정 검색
+            events = calendar.search_events(search_query, max_results=1)
+            
+            if not events:
+                return f"📅 '{search_query}' 일정을 찾을 수 없습니다."
+            
+            event = events[0]
+            event_id = event['id']
+            
+            # 새로운 시간 파싱
+            new_time = None
+            new_date = args.get("new_date")
+            new_time_str = args.get("new_time")
+            
+            if new_date or new_time_str:
+                # 날짜 파싱
+                if new_date == "today":
+                    event_date = datetime.now()
+                elif new_date == "tomorrow":
+                    event_date = datetime.now() + timedelta(days=1)
+                elif new_date:
+                    try:
+                        event_date = datetime.strptime(new_date, "%Y-%m-%d")
+                    except:
+                        event_date = datetime.now()
+                else:
+                    # 기존 날짜 유지
+                    from dateutil import parser
+                    event_date = parser.parse(event['start'])
+                
+                # 시간 파싱
+                if new_time_str:
+                    try:
+                        hour, minute = map(int, new_time_str.split(":"))
+                    except:
+                        hour, minute = 9, 0
+                else:
+                    hour, minute = event_date.hour, event_date.minute
+                
+                new_time = event_date.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            
+            # 수정 실행
+            new_title = args.get("new_title")
+            result = calendar.update_event(event_id, title=new_title, start_time=new_time)
+            
+            if result:
+                changes = []
+                if new_title:
+                    changes.append(f"제목: {new_title}")
+                if new_time:
+                    changes.append(f"시간: {new_time.strftime('%Y-%m-%d %H:%M')}")
+                
+                return f"✅ 일정이 수정되었습니다!\n\n📅 {event['title']}\n변경사항: {', '.join(changes)}"
+            else:
+                return "❌ 일정 수정에 실패했습니다."
+            
+        except Exception as e:
+            return f"📅 일정 수정 오류: {str(e)}"
+    
+    def _delete_calendar_event(self, args: Dict[str, Any]) -> str:
+        """일정 삭제"""
+        if not GOOGLE_AVAILABLE:
+            return "📅 Google 캘린더가 연결되지 않았습니다."
+        
+        try:
+            calendar = get_calendar_service()
+            search_query = args.get("search_query", "")
+            
+            # 일정 검색
+            events = calendar.search_events(search_query, max_results=1)
+            
+            if not events:
+                return f"📅 '{search_query}' 일정을 찾을 수 없습니다."
+            
+            event = events[0]
+            event_id = event['id']
+            event_title = event['title']
+            event_start = event['start']
+            
+            # 삭제 실행
+            if calendar.delete_event(event_id):
+                return f"✅ 일정이 삭제되었습니다!\n\n🗑️ {event_title}\n📆 {event_start}"
+            else:
+                return "❌ 일정 삭제에 실패했습니다."
+            
+        except Exception as e:
+            return f"📅 일정 삭제 오류: {str(e)}"
     
     def _check_email(self, args: Dict[str, Any]) -> str:
         """이메일 확인"""

@@ -182,6 +182,114 @@ class CalendarService:
         except Exception as e:
             print(f"[Calendar] 일정 생성 실패: {e}")
             return None
+    
+    def update_event(self, event_id: str, title: str = None, 
+                     start_time: datetime = None, duration_minutes: int = None) -> Optional[Dict]:
+        """일정 수정"""
+        if not self.service:
+            if not self.connect():
+                return None
+        
+        try:
+            # 기존 이벤트 조회
+            event = self.service.events().get(
+                calendarId='primary', eventId=event_id
+            ).execute()
+            
+            # 수정할 내용 업데이트
+            if title:
+                event['summary'] = title
+            
+            if start_time:
+                # 기존 duration 계산
+                old_start = event['start'].get('dateTime')
+                old_end = event['end'].get('dateTime')
+                if old_start and old_end:
+                    from dateutil import parser
+                    old_duration = parser.parse(old_end) - parser.parse(old_start)
+                    duration = duration_minutes if duration_minutes else int(old_duration.total_seconds() / 60)
+                else:
+                    duration = duration_minutes if duration_minutes else 60
+                
+                end_time = start_time + timedelta(minutes=duration)
+                event['start'] = {
+                    'dateTime': start_time.isoformat(),
+                    'timeZone': 'Asia/Seoul',
+                }
+                event['end'] = {
+                    'dateTime': end_time.isoformat(),
+                    'timeZone': 'Asia/Seoul',
+                }
+            
+            updated_event = self.service.events().update(
+                calendarId='primary', eventId=event_id, body=event
+            ).execute()
+            
+            return {
+                'id': updated_event['id'],
+                'title': updated_event.get('summary', ''),
+                'start': updated_event['start'].get('dateTime', ''),
+                'link': updated_event.get('htmlLink', '')
+            }
+            
+        except Exception as e:
+            print(f"[Calendar] 일정 수정 실패: {e}")
+            return None
+    
+    def delete_event(self, event_id: str) -> bool:
+        """일정 삭제"""
+        if not self.service:
+            if not self.connect():
+                return False
+        
+        try:
+            self.service.events().delete(
+                calendarId='primary', eventId=event_id
+            ).execute()
+            return True
+            
+        except Exception as e:
+            print(f"[Calendar] 일정 삭제 실패: {e}")
+            return False
+    
+    def search_events(self, query: str, max_results: int = 5) -> List[Dict]:
+        """일정 검색 (제목으로)"""
+        if not self.service:
+            if not self.connect():
+                return []
+        
+        try:
+            # 오늘부터 한 달간 검색
+            now = datetime.now()
+            end_date = now + timedelta(days=30)
+            
+            events_result = self.service.events().list(
+                calendarId='primary',
+                timeMin=now.isoformat() + 'Z',
+                timeMax=end_date.isoformat() + 'Z',
+                maxResults=max_results,
+                singleEvents=True,
+                orderBy='startTime',
+                q=query  # 검색어
+            ).execute()
+            
+            events = events_result.get('items', [])
+            
+            result = []
+            for event in events:
+                start = event['start'].get('dateTime', event['start'].get('date'))
+                result.append({
+                    'id': event['id'],
+                    'title': event.get('summary', '(제목 없음)'),
+                    'start': start,
+                    'location': event.get('location', ''),
+                })
+            
+            return result
+            
+        except Exception as e:
+            print(f"[Calendar] 일정 검색 실패: {e}")
+            return []
 
 
 class GmailService:
