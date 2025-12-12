@@ -90,13 +90,17 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "update_calendar_event",
-            "description": "기존 일정을 수정합니다. 예: '3시 회의를 4시로 변경해줘', '미팅 제목을 바꿔줘'",
+            "description": "기존 일정을 수정합니다. 예: '3시 회의를 4시로 변경해줘', '내일 미팅 제목 바꿔줘'",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "search_query": {
                         "type": "string",
-                        "description": "수정할 일정을 찾기 위한 검색어 (일정 제목)"
+                        "description": "수정할 일정을 찾기 위한 검색어 (일정 제목). 없으면 날짜로만 검색"
+                    },
+                    "search_date": {
+                        "type": "string",
+                        "description": "수정할 일정의 날짜. 'YYYY-MM-DD' 형식. 특정 날짜 일정 수정 시 사용"
                     },
                     "new_title": {
                         "type": "string",
@@ -104,14 +108,14 @@ TOOLS = [
                     },
                     "new_date": {
                         "type": "string",
-                        "description": "새로운 날짜. 'today', 'tomorrow', 또는 'YYYY-MM-DD' 형식"
+                        "description": "새로운 날짜. 'YYYY-MM-DD' 형식"
                     },
                     "new_time": {
                         "type": "string",
                         "description": "새로운 시간. 'HH:MM' 24시간 형식 (예: '16:00')"
                     }
                 },
-                "required": ["search_query"]
+                "required": []
             }
         }
     },
@@ -119,16 +123,20 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "delete_calendar_event",
-            "description": "일정을 삭제/취소합니다. 예: '내일 미팅 취소해줘', '회의 일정 삭제해줘'",
+            "description": "일정을 삭제/취소합니다. 제목이나 날짜로 검색 가능. 예: '내일 일정 삭제해줘', '회의 취소해줘', '12월 15일 미팅 삭제'",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "search_query": {
                         "type": "string",
-                        "description": "삭제할 일정을 찾기 위한 검색어 (일정 제목)"
+                        "description": "삭제할 일정 제목 (검색어). 없으면 날짜의 모든 일정 표시"
+                    },
+                    "search_date": {
+                        "type": "string",
+                        "description": "삭제할 일정 날짜. 'YYYY-MM-DD' 형식. 예: '2024-12-15'"
                     }
                 },
-                "required": ["search_query"]
+                "required": []
             }
         }
     },
@@ -153,16 +161,30 @@ TOOLS = [
 ]
 
 # 시스템 프롬프트
-SYSTEM_PROMPT = """당신은 SION이라는 친절한 개인 비서 AI입니다.
+def get_system_prompt() -> str:
+    """현재 날짜/시간 정보를 포함한 시스템 프롬프트 생성"""
+    now = datetime.now()
+    weekdays = ['월요일', '화요일', '수요일', '목요일', '금요일', '토요일', '일요일']
+    weekday = weekdays[now.weekday()]
+    
+    return f"""당신은 SION이라는 친절한 개인 비서 AI입니다.
 
-사용자의 요청을 이해하고 적절한 도구(함수)를 사용하여 도움을 드립니다.
+## 현재 시간 정보
+- 오늘 날짜: {now.strftime('%Y년 %m월 %d일')} ({weekday})
+- 현재 시간: {now.strftime('%H시 %M분')}
 
-사용 가능한 기능:
+## 사용 가능한 기능
 1. 일정 확인 - 오늘/내일/특정 날짜의 캘린더 일정 확인
-2. 일정 추가 - 새로운 일정을 캘린더에 추가
+2. 일정 추가 - 새로운 일정을 캘린더에 추가 (단일/기간 일정 모두 가능)
 3. 일정 수정 - 기존 일정의 시간이나 제목 변경
-4. 일정 삭제 - 일정 취소/삭제
+4. 일정 삭제 - 일정 취소/삭제 (날짜나 제목으로 검색 가능)
 5. 이메일 확인 - 읽지 않은 이메일 확인
+
+## 날짜 처리 규칙
+- "오늘" = {now.strftime('%Y-%m-%d')}
+- "내일" = {(now + timedelta(days=1)).strftime('%Y-%m-%d')}
+- "모레" = {(now + timedelta(days=2)).strftime('%Y-%m-%d')}
+- "다음주 월요일" 같은 표현도 계산해서 YYYY-MM-DD 형식으로 변환
 
 일정이나 이메일 관련 요청이면 반드시 해당 함수를 호출하세요.
 그 외의 일반적인 질문에는 직접 답변해주세요.
@@ -197,7 +219,7 @@ class LLMAgent:
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "system", "content": get_system_prompt()},
                     {"role": "user", "content": user_message}
                 ],
                 tools=TOOLS,
@@ -372,19 +394,42 @@ class LLMAgent:
             return datetime.now()
     
     def _update_calendar_event(self, args: Dict[str, Any]) -> str:
-        """일정 수정"""
+        """일정 수정 (제목 또는 날짜로 검색)"""
         if not GOOGLE_AVAILABLE:
             return "📅 Google 캘린더가 연결되지 않았습니다."
         
         try:
             calendar = get_calendar_service()
-            search_query = args.get("search_query", "")
+            search_query = args.get("search_query")
+            search_date_str = args.get("search_date")
+            
+            # 검색 날짜 파싱
+            search_date = None
+            if search_date_str:
+                search_date = self._parse_date(search_date_str)
             
             # 일정 검색
-            events = calendar.search_events(search_query, max_results=1)
+            events = calendar.search_events(
+                query=search_query,
+                search_date=search_date,
+                max_results=5
+            )
             
             if not events:
-                return f"📅 '{search_query}' 일정을 찾을 수 없습니다."
+                if search_date:
+                    return f"📅 {search_date.strftime('%Y-%m-%d')}에 일정이 없습니다."
+                elif search_query:
+                    return f"📅 '{search_query}' 일정을 찾을 수 없습니다."
+                else:
+                    return "📅 수정할 일정 정보를 입력해주세요."
+            
+            # 여러 개면 목록 표시
+            if len(events) > 1 and not search_query:
+                response = f"📅 수정 가능한 일정 ({len(events)}개):\n\n"
+                for i, evt in enumerate(events, 1):
+                    response += f"{i}. {evt['title']} ({evt['start']})\n"
+                response += "\n수정할 일정 제목을 말씀해주세요."
+                return response
             
             event = events[0]
             event_id = event['id']
@@ -396,15 +441,8 @@ class LLMAgent:
             
             if new_date or new_time_str:
                 # 날짜 파싱
-                if new_date == "today":
-                    event_date = datetime.now()
-                elif new_date == "tomorrow":
-                    event_date = datetime.now() + timedelta(days=1)
-                elif new_date:
-                    try:
-                        event_date = datetime.strptime(new_date, "%Y-%m-%d")
-                    except:
-                        event_date = datetime.now()
+                if new_date:
+                    event_date = self._parse_date(new_date)
                 else:
                     # 기존 날짜 유지
                     from dateutil import parser
@@ -440,26 +478,49 @@ class LLMAgent:
             return f"📅 일정 수정 오류: {str(e)}"
     
     def _delete_calendar_event(self, args: Dict[str, Any]) -> str:
-        """일정 삭제"""
+        """일정 삭제 (제목 또는 날짜로 검색)"""
         if not GOOGLE_AVAILABLE:
             return "📅 Google 캘린더가 연결되지 않았습니다."
         
         try:
             calendar = get_calendar_service()
-            search_query = args.get("search_query", "")
+            search_query = args.get("search_query")
+            search_date_str = args.get("search_date")
+            
+            # 날짜 파싱
+            search_date = None
+            if search_date_str:
+                search_date = self._parse_date(search_date_str)
             
             # 일정 검색
-            events = calendar.search_events(search_query, max_results=1)
+            events = calendar.search_events(
+                query=search_query, 
+                search_date=search_date, 
+                max_results=5
+            )
             
             if not events:
-                return f"📅 '{search_query}' 일정을 찾을 수 없습니다."
+                if search_date:
+                    return f"📅 {search_date.strftime('%Y-%m-%d')}에 일정이 없습니다."
+                elif search_query:
+                    return f"📅 '{search_query}' 일정을 찾을 수 없습니다."
+                else:
+                    return "📅 검색할 일정 정보를 입력해주세요."
             
+            # 여러 개면 목록 표시 (첫 번째 삭제)
+            if len(events) > 1 and not search_query:
+                response = f"📅 {search_date.strftime('%Y-%m-%d')}의 일정 ({len(events)}개):\n\n"
+                for i, evt in enumerate(events, 1):
+                    response += f"{i}. {evt['title']} ({evt['start']})\n"
+                response += "\n삭제할 일정 제목을 말씀해주세요."
+                return response
+            
+            # 삭제 실행
             event = events[0]
             event_id = event['id']
             event_title = event['title']
             event_start = event['start']
             
-            # 삭제 실행
             if calendar.delete_event(event_id):
                 return f"✅ 일정이 삭제되었습니다!\n\n🗑️ {event_title}\n📆 {event_start}"
             else:

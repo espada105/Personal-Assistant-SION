@@ -291,26 +291,43 @@ class CalendarService:
             print(f"[Calendar] 일정 삭제 실패: {e}")
             return False
     
-    def search_events(self, query: str, max_results: int = 5) -> List[Dict]:
-        """일정 검색 (제목으로)"""
+    def search_events(self, query: str = None, search_date: datetime = None, 
+                       max_results: int = 5) -> List[Dict]:
+        """일정 검색 (제목 또는 날짜로)"""
         if not self.service:
             if not self.connect():
                 return []
         
         try:
-            # 오늘부터 한 달간 검색
-            now = datetime.now()
-            end_date = now + timedelta(days=30)
+            # 날짜 범위 설정
+            if search_date:
+                # 특정 날짜 검색
+                start_of_day = search_date.replace(hour=0, minute=0, second=0, microsecond=0)
+                end_of_day = start_of_day + timedelta(days=1)
+                time_min = start_of_day.isoformat() + 'Z'
+                time_max = end_of_day.isoformat() + 'Z'
+            else:
+                # 오늘부터 한 달간 검색
+                now = datetime.now()
+                end_date = now + timedelta(days=30)
+                time_min = now.isoformat() + 'Z'
+                time_max = end_date.isoformat() + 'Z'
             
-            events_result = self.service.events().list(
-                calendarId='primary',
-                timeMin=now.isoformat() + 'Z',
-                timeMax=end_date.isoformat() + 'Z',
-                maxResults=max_results,
-                singleEvents=True,
-                orderBy='startTime',
-                q=query  # 검색어
-            ).execute()
+            # API 호출 파라미터
+            params = {
+                'calendarId': 'primary',
+                'timeMin': time_min,
+                'timeMax': time_max,
+                'maxResults': max_results,
+                'singleEvents': True,
+                'orderBy': 'startTime',
+            }
+            
+            # 검색어가 있으면 추가
+            if query:
+                params['q'] = query
+            
+            events_result = self.service.events().list(**params).execute()
             
             events = events_result.get('items', [])
             
