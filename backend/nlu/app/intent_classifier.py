@@ -277,3 +277,4 @@ class TransformerIntentClassifier(IntentClassifier):
             logger.error(f"모델 로드 실패: {e}")
             return super().load()  # 규칙 기반으로 폴백
 
+

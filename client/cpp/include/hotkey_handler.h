@@ -121,3 +121,4 @@ private:
 
 #endif // HOTKEY_HANDLER_H
 
+

@@ -115,3 +115,4 @@ class TestNLUAPI:
         data = response.json()
         assert "intents" in data
 
+

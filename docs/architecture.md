@@ -183,3 +183,4 @@ SION은 Docker와 AWS를 활용한 AI 기반 개인 비서 시스템입니다. �
 3. **IAM**: 최소 권한 원칙 적용
 4. **VPC**: Private Subnet에 백엔드 서비스 배치
 
+

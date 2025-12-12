@@ -192,3 +192,4 @@ if __name__ == "__main__":
     audio_bytes = recorder.record(duration=5.0)
     print(f"녹음된 오디오 크기: {len(audio_bytes)} bytes")
 
+

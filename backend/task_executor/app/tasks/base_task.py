@@ -34,3 +34,4 @@ class BaseTask(ABC):
                 raise ValueError(f"필수 파라미터가 누락되었습니다: {key}")
         return True
 
+

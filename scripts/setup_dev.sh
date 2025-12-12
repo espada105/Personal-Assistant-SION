@@ -141,3 +141,4 @@ echo "  3. 로컬 실행: ./scripts/run_local.sh"
 echo "  4. Docker 실행: docker-compose up --build"
 echo ""
 
+

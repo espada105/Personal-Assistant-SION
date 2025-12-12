@@ -106,3 +106,4 @@ intents:
     description: "앱 실행"
     handler: "local"
 
+
