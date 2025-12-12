@@ -12,12 +12,21 @@ import time
 import requests
 from datetime import datetime, timedelta
 
+# 프로젝트 루트 경로 (먼저 정의)
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 # Google Services 임포트
 try:
+    # 패키지로 실행될 때
     from .google_services import get_auth_manager, get_calendar_service, get_gmail_service
     GOOGLE_AVAILABLE = True
 except ImportError:
-    GOOGLE_AVAILABLE = False
+    try:
+        # 직접 실행될 때
+        from google_services import get_auth_manager, get_calendar_service, get_gmail_service
+        GOOGLE_AVAILABLE = True
+    except ImportError:
+        GOOGLE_AVAILABLE = False
 
 # OpenAI 임포트
 try:
@@ -28,8 +37,16 @@ try:
 except ImportError:
     OPENAI_AVAILABLE = False
 
-# 프로젝트 루트 경로
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# LLM Agent 임포트
+try:
+    from llm_agent import get_agent, LLMAgent
+    LLM_AGENT_AVAILABLE = True
+except ImportError:
+    try:
+        from .llm_agent import get_agent, LLMAgent
+        LLM_AGENT_AVAILABLE = True
+    except ImportError:
+        LLM_AGENT_AVAILABLE = False
 
 
 class ServiceManager:
@@ -291,8 +308,16 @@ class SionApp(ctk.CTk):
         threading.Thread(target=self.process_message, args=(message,), daemon=True).start()
     
     def process_message(self, message: str):
-        """메시지 처리 (NLU API 호출)"""
+        """메시지 처리 (LLM Agent 사용)"""
         try:
+            # LLM Agent 사용 (GPT가 직접 의도 파악 및 함수 호출)
+            if LLM_AGENT_AVAILABLE:
+                agent = get_agent()
+                reply = agent.process(message)
+                self.after(0, lambda r=reply: self.add_message(r, is_user=False))
+                return
+            
+            # 폴백: 기존 NLU 방식
             if not self.services_ready:
                 self.after(0, lambda: self.add_message(
                     "⏳ 서비스가 아직 준비 중입니다. 잠시만 기다려주세요.",
