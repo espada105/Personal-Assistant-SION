@@ -183,14 +183,18 @@ class SionApp(ctk.CTk):
         super().__init__()
         
         # 윈도우 설정
-        self.title("🤖 SION Personal Assistant")
+        self.title("SION Personal Assistant")
         self.geometry("500x700")
         self.minsize(400, 500)
         
-        # 앱 아이콘 설정
+        # 앱 아이콘 설정 (작업 표시줄 포함)
         icon_path = os.path.join(PROJECT_ROOT, "configs", "SION.ico")
         if os.path.exists(icon_path):
             self.iconbitmap(icon_path)
+            # Windows 작업 표시줄 아이콘 설정
+            if sys.platform == "win32":
+                import ctypes
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("SION.PersonalAssistant")
         
         # 테마 설정
         ctk.set_appearance_mode("dark")
@@ -234,7 +238,7 @@ class SionApp(ctk.CTk):
         # 로고/타이틀
         title_label = ctk.CTkLabel(
             header_frame, 
-            text="🤖 SION", 
+            text="SION", 
             font=("맑은 고딕", 20, "bold"),
             text_color="#4A9FFF"
         )
