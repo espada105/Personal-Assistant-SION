@@ -32,6 +32,13 @@ try:
 except ImportError:
     TTS_AVAILABLE = False
 
+# 글로벌 핫키 관련 임포트
+try:
+    import keyboard
+    HOTKEY_AVAILABLE = True
+except ImportError:
+    HOTKEY_AVAILABLE = False
+
 import tempfile
 
 # 프로젝트 루트 경로 (먼저 정의)
@@ -192,11 +199,18 @@ class SionApp(ctk.CTk):
         self.voice_mode = False
         self.is_speaking = False
         
+        # 글로벌 핫키 설정
+        self.hotkey_registered = False
+        self.hotkey_combo = "ctrl+shift+s"  # 기본 단축키
+        
         # UI 구성
         self.setup_ui()
         
         # 서비스 시작 (백그라운드)
         self.start_services_async()
+        
+        # 글로벌 핫키 등록
+        self.register_hotkey()
         
         # 종료 시 서비스 정리
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -273,7 +287,10 @@ class SionApp(ctk.CTk):
         self.chat_frame.grid_columnconfigure(0, weight=1)
         
         # 환영 메시지
-        self.add_message("안녕하세요! SION입니다. 무엇을 도와드릴까요?", is_user=False)
+        welcome_msg = "안녕하세요! SION입니다. 무엇을 도와드릴까요?"
+        if HOTKEY_AVAILABLE:
+            welcome_msg += f"\n\n💡 Tip: {self.hotkey_combo.upper()} 키로 어디서든 호출할 수 있어요!"
+        self.add_message(welcome_msg, is_user=False)
         
         # === 입력 영역 ===
         input_frame = ctk.CTkFrame(self, fg_color="#1E1E1E", height=70)
@@ -872,8 +889,59 @@ class SionApp(ctk.CTk):
         
         threading.Thread(target=do_login, daemon=True).start()
     
+    def register_hotkey(self):
+        """글로벌 핫키 등록"""
+        if not HOTKEY_AVAILABLE:
+            print("[Hotkey] keyboard 모듈이 설치되지 않았습니다.")
+            return
+        
+        try:
+            keyboard.add_hotkey(self.hotkey_combo, self.on_hotkey_pressed)
+            self.hotkey_registered = True
+            print(f"[Hotkey] 글로벌 핫키 등록됨: {self.hotkey_combo.upper()}")
+        except Exception as e:
+            print(f"[Hotkey] 핫키 등록 실패: {e}")
+    
+    def unregister_hotkey(self):
+        """글로벌 핫키 해제"""
+        if not HOTKEY_AVAILABLE or not self.hotkey_registered:
+            return
+        
+        try:
+            keyboard.remove_hotkey(self.hotkey_combo)
+            self.hotkey_registered = False
+            print("[Hotkey] 글로벌 핫키 해제됨")
+        except Exception as e:
+            print(f"[Hotkey] 핫키 해제 실패: {e}")
+    
+    def on_hotkey_pressed(self):
+        """핫키가 눌렸을 때 호출"""
+        # GUI 스레드에서 실행되도록 after 사용
+        self.after(0, self.activate_and_listen)
+    
+    def activate_and_listen(self):
+        """앱 활성화 및 음성 입력 시작"""
+        try:
+            # 창 복원 및 최상위로
+            self.deiconify()  # 최소화 해제
+            self.lift()  # 최상위로
+            self.focus_force()  # 포커스 강제
+            
+            # Windows에서 창을 확실히 활성화
+            self.attributes('-topmost', True)
+            self.after(100, lambda: self.attributes('-topmost', False))
+            
+            # 음성 입력 시작 (약간의 딜레이 후)
+            if AUDIO_AVAILABLE and not self.is_recording:
+                self.after(300, self.toggle_recording)
+                
+        except Exception as e:
+            print(f"[Hotkey] 활성화 오류: {e}")
+    
     def on_closing(self):
         """앱 종료 시"""
+        # 핫키 해제
+        self.unregister_hotkey()
         self.service_manager.stop_all()
         self.destroy()
 
