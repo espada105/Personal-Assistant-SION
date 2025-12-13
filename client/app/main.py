@@ -206,47 +206,81 @@ COLORS = {
 
 
 class ChatMessage(ctk.CTkFrame):
-    """채팅 메시지 위젯 (모던 디자인)"""
+    """채팅 메시지 위젯 (모던 디자인 + 스트리밍 지원)"""
     
-    def __init__(self, parent, message: str, is_user: bool = True, **kwargs):
+    def __init__(self, parent, message: str, is_user: bool = True, streaming: bool = False, on_update=None, **kwargs):
         super().__init__(parent, **kwargs)
         
         self.configure(fg_color="transparent")
+        self.full_message = message
+        self.current_text = ""
+        self.streaming = streaming
+        self.on_update = on_update  # 업데이트 시 호출할 콜백 (스크롤용)
+        self.is_user = is_user
         
         # 메시지 정렬 및 색상 - 60% 너비 사용
         if is_user:
-            anchor = "e"
+            self.anchor = "e"
             bg_color = COLORS["user_bubble"]
-            text_color = COLORS["text_primary"]
-            padx = (150, 15)  # 좌측 여백 늘려서 60% 너비
+            self.text_color = COLORS["text_primary"]
+            self.padx = (150, 15)  # 좌측 여백 늘려서 60% 너비
             corner = 20
         else:
-            anchor = "w"
+            self.anchor = "w"
             bg_color = COLORS["ai_bubble"]
-            text_color = COLORS["text_primary"]
-            padx = (15, 150)  # 우측 여백 늘려서 60% 너비
+            self.text_color = COLORS["text_primary"]
+            self.padx = (15, 150)  # 우측 여백 늘려서 60% 너비
             corner = 20
         
         # 메시지 컨테이너 (그라데이션 효과)
-        msg_frame = ctk.CTkFrame(
+        self.msg_frame = ctk.CTkFrame(
             self, 
             fg_color=bg_color, 
             corner_radius=corner,
             border_width=1 if not is_user else 0,
             border_color="#3D3D5C" if not is_user else None
         )
-        msg_frame.pack(anchor=anchor, padx=padx, pady=10)
+        self.msg_frame.pack(anchor=self.anchor, padx=self.padx, pady=10)
         
         # 메시지 텍스트
-        msg_label = ctk.CTkLabel(
-            msg_frame, 
-            text=message,
-            text_color=text_color,
+        initial_text = "" if streaming else message
+        self.msg_label = ctk.CTkLabel(
+            self.msg_frame, 
+            text=initial_text,
+            text_color=self.text_color,
             wraplength=450,  # 60% 너비에 맞춤
             justify="left",
             font=("경기천년제목 Medium", 14)
         )
-        msg_label.pack(padx=18, pady=14)
+        self.msg_label.pack(padx=18, pady=14)
+        
+        # 스트리밍 모드면 타이핑 시작
+        if streaming and not is_user:
+            self.char_index = 0
+            self.after(10, self._type_next_char)
+    
+    def _type_next_char(self):
+        """한 글자씩 타이핑 효과"""
+        if self.char_index < len(self.full_message):
+            # 여러 글자씩 추가 (속도 향상)
+            chunk_size = 3  # 한 번에 3글자씩
+            end_index = min(self.char_index + chunk_size, len(self.full_message))
+            self.current_text = self.full_message[:end_index]
+            self.msg_label.configure(text=self.current_text)
+            self.char_index = end_index
+            
+            # 스크롤 콜백 호출
+            if self.on_update:
+                self.on_update()
+            
+            # 다음 글자
+            self.after(15, self._type_next_char)  # 15ms 간격
+    
+    def set_text(self, text: str):
+        """텍스트 직접 설정 (스트리밍 완료 후 등)"""
+        self.full_message = text
+        self.current_text = text
+        self.msg_label.configure(text=text)
 
 
 class SplashScreen(ctk.CTkToplevel):
@@ -617,12 +651,28 @@ class SionApp(ctk.CTk):
         else:
             self.attributes('-alpha', 1.0)
     
-    def add_message(self, message: str, is_user: bool = True):
-        """채팅에 메시지 추가"""
-        msg_widget = ChatMessage(self.chat_frame, message, is_user)
+    def add_message(self, message: str, is_user: bool = True, streaming: bool = False):
+        """채팅에 메시지 추가 (스트리밍 타이핑 효과 지원)"""
+        # AI 응답이고 streaming=True면 타이핑 효과 적용
+        use_streaming = streaming and not is_user
+        
+        msg_widget = ChatMessage(
+            self.chat_frame, 
+            message, 
+            is_user,
+            streaming=use_streaming,
+            on_update=self._scroll_to_bottom
+        )
         msg_widget.pack(fill="x", pady=2)
         
         # 스크롤 맨 아래로
+        self._scroll_to_bottom()
+        
+        return msg_widget
+    
+    def _scroll_to_bottom(self):
+        """채팅 스크롤을 맨 아래로 이동"""
+        self.update_idletasks()
         self.chat_frame._parent_canvas.yview_moveto(1.0)
     
     def start_services_async(self):
@@ -668,7 +718,8 @@ class SionApp(ctk.CTk):
             if LLM_AGENT_AVAILABLE:
                 agent = get_agent()
                 reply = agent.process(message)
-                self.after(0, lambda r=reply: self.add_message(r, is_user=False))
+                # 스트리밍 타이핑 효과로 응답 표시
+                self.after(0, lambda r=reply: self.add_message(r, is_user=False, streaming=True))
                 # 음성 모드일 때 응답을 읽어줌
                 if self.voice_mode:
                     self.after(100, lambda r=reply: self.speak_text(r))
@@ -699,7 +750,8 @@ class SionApp(ctk.CTk):
                 confidence = intent.get("confidence", 0)
                 
                 reply = self.generate_response(intent_name, entities, message)
-                self.after(0, lambda r=reply: self.add_message(r, is_user=False))
+                # 스트리밍 타이핑 효과로 응답 표시
+                self.after(0, lambda r=reply: self.add_message(r, is_user=False, streaming=True))
             else:
                 self.after(0, lambda: self.add_message(
                     "❌ 서버 응답 오류가 발생했습니다.",
@@ -1272,7 +1324,8 @@ class SionApp(ctk.CTk):
                 briefing += "\n─" * 30
                 briefing += "\n💬 무엇을 도와드릴까요?"
                 
-                self.after(0, lambda: self.add_message(briefing, is_user=False))
+                # 스트리밍 타이핑 효과로 브리핑 표시
+                self.after(0, lambda: self.add_message(briefing, is_user=False, streaming=True))
                 
                 # 음성 모드면 브리핑 읽어주기
                 if self.voice_mode:
