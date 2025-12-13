@@ -213,18 +213,18 @@ class ChatMessage(ctk.CTkFrame):
         
         self.configure(fg_color="transparent")
         
-        # 메시지 정렬 및 색상
+        # 메시지 정렬 및 색상 - 60% 너비 사용
         if is_user:
             anchor = "e"
             bg_color = COLORS["user_bubble"]
             text_color = COLORS["text_primary"]
-            padx = (80, 15)
+            padx = (150, 15)  # 좌측 여백 늘려서 60% 너비
             corner = 20
         else:
             anchor = "w"
             bg_color = COLORS["ai_bubble"]
             text_color = COLORS["text_primary"]
-            padx = (15, 80)
+            padx = (15, 150)  # 우측 여백 늘려서 60% 너비
             corner = 20
         
         # 메시지 컨테이너 (그라데이션 효과)
@@ -235,18 +235,18 @@ class ChatMessage(ctk.CTkFrame):
             border_width=1 if not is_user else 0,
             border_color="#3D3D5C" if not is_user else None
         )
-        msg_frame.pack(anchor=anchor, padx=padx, pady=8)
+        msg_frame.pack(anchor=anchor, padx=padx, pady=10)
         
         # 메시지 텍스트
         msg_label = ctk.CTkLabel(
             msg_frame, 
             text=message,
             text_color=text_color,
-            wraplength=350,
+            wraplength=450,  # 60% 너비에 맞춤
             justify="left",
-            font=("경기천년제목 Medium", 13)
+            font=("경기천년제목 Medium", 14)
         )
-        msg_label.pack(padx=18, pady=12)
+        msg_label.pack(padx=18, pady=14)
 
 
 class SplashScreen(ctk.CTkToplevel):
@@ -411,9 +411,10 @@ class SionApp(ctk.CTk):
     
     def show_main_window(self):
         """메인 윈도우 표시 (페이드인)"""
-        self.attributes('-alpha', 0.0)
         self.deiconify()  # 창 표시
-        self._fade_in(0.0)
+        self.attributes('-alpha', 1.0)  # 바로 표시
+        self.lift()
+        self.focus_force()
     
     def center_window(self, width, height):
         """창을 화면 중앙에 배치"""
@@ -478,6 +479,38 @@ class SionApp(ctk.CTk):
         )
         self.google_btn.grid(row=0, column=2, padx=8, pady=15, sticky="e")
         
+        # 캘린더 바로가기 버튼 (로그인 후 표시)
+        self.calendar_btn = ctk.CTkButton(
+            header_frame,
+            text="📅",
+            width=36,
+            height=36,
+            font=("Segoe UI", 16),
+            fg_color=COLORS["bg_card"],
+            hover_color=COLORS["primary_dark"],
+            corner_radius=18,
+            border_width=1,
+            border_color="#666666",
+            command=self.open_google_calendar
+        )
+        # 처음엔 숨김
+        
+        # 메일 바로가기 버튼 (로그인 후 표시)
+        self.mail_btn = ctk.CTkButton(
+            header_frame,
+            text="📧",
+            width=36,
+            height=36,
+            font=("Segoe UI", 16),
+            fg_color=COLORS["bg_card"],
+            hover_color=COLORS["primary_dark"],
+            corner_radius=18,
+            border_width=1,
+            border_color="#666666",
+            command=self.open_gmail
+        )
+        # 처음엔 숨김
+        
         # 상태 표시 (작은 점으로)
         self.status_label = ctk.CTkLabel(
             header_frame,
@@ -499,15 +532,6 @@ class SionApp(ctk.CTk):
         chat_container.grid_columnconfigure(0, weight=1)
         chat_container.grid_rowconfigure(0, weight=1)
         
-        # 채팅 타이틀
-        chat_title = ctk.CTkLabel(
-            chat_container,
-            text="Chat",
-            font=("경기천년제목 Medium", 16),
-            text_color=COLORS["text_secondary"]
-        )
-        chat_title.grid(row=0, column=0, pady=(15, 5))
-        
         # 스크롤 가능한 채팅 영역
         self.chat_frame = ctk.CTkScrollableFrame(
             chat_container,
@@ -515,9 +539,8 @@ class SionApp(ctk.CTk):
             scrollbar_button_color=COLORS["primary_dark"],
             scrollbar_button_hover_color=COLORS["primary"]
         )
-        self.chat_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(5, 10))
+        self.chat_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
         self.chat_frame.grid_columnconfigure(0, weight=1)
-        chat_container.grid_rowconfigure(1, weight=1)
         
         # 환영 메시지
         welcome_msg = "안녕하세요! SION입니다. 무엇을 도와드릴까요?"
@@ -1127,7 +1150,7 @@ class SionApp(ctk.CTk):
                 
                 if auth_manager.authenticate():
                     self.after(0, lambda: self.add_message(
-                        "✅ Google 로그인 성공!\n\n이제 일정과 이메일을 확인할 수 있습니다.",
+                        "✅ Google 로그인 성공!",
                         is_user=False
                     ))
                     self.after(0, lambda: self.google_btn.configure(
@@ -1135,6 +1158,10 @@ class SionApp(ctk.CTk):
                         fg_color=COLORS["primary"],
                         border_color=COLORS["primary_light"]
                     ))
+                    # 캘린더/메일 바로가기 버튼 표시
+                    self.after(0, self.show_google_shortcuts)
+                    # 로그인 성공 후 오늘의 브리핑 자동 실행
+                    self.after(500, self.show_daily_briefing)
                 else:
                     self.after(0, lambda: self.add_message(
                         "❌ Google 로그인에 실패했습니다.",
@@ -1147,6 +1174,118 @@ class SionApp(ctk.CTk):
                 ))
         
         threading.Thread(target=do_login, daemon=True).start()
+    
+    def show_google_shortcuts(self):
+        """Google 캘린더/메일 바로가기 버튼 표시"""
+        self.calendar_btn.grid(row=0, column=3, padx=4, pady=15, sticky="e")
+        self.mail_btn.grid(row=0, column=4, padx=4, pady=15, sticky="e")
+        # 상태 표시를 오른쪽으로 이동
+        self.status_label.grid(row=0, column=5, padx=15, pady=15, sticky="e")
+    
+    def open_google_calendar(self):
+        """Google 캘린더 웹페이지 열기"""
+        import webbrowser
+        webbrowser.open("https://calendar.google.com")
+    
+    def open_gmail(self):
+        """Gmail 웹페이지 열기"""
+        import webbrowser
+        webbrowser.open("https://mail.google.com")
+    
+    def show_daily_briefing(self):
+        """오늘의 일정과 메일을 자동으로 정리해서 보여줌"""
+        def fetch_briefing():
+            try:
+                from datetime import datetime
+                now = datetime.now()
+                weekdays = ['월요일', '화요일', '수요일', '목요일', '금요일', '토요일', '일요일']
+                today_str = f"{now.year}년 {now.month}월 {now.day}일 ({weekdays[now.weekday()]})"
+                
+                briefing = f"📋 오늘의 브리핑 - {today_str}\n"
+                briefing += "─" * 30 + "\n\n"
+                
+                # 오늘 일정 조회
+                try:
+                    calendar = get_calendar_service()
+                    events = calendar.get_today_events()
+                    
+                    if events:
+                        briefing += f"📅 오늘 일정 ({len(events)}개)\n\n"
+                        for event in events:
+                            time_str = event['start']
+                            if 'T' in time_str:
+                                time_str = time_str.split('T')[1][:5]
+                            else:
+                                time_str = "종일"
+                            briefing += f"  • {time_str} - {event['title']}\n"
+                    else:
+                        briefing += "📅 오늘 예정된 일정이 없습니다.\n"
+                except Exception as e:
+                    briefing += f"📅 일정 조회 실패: {str(e)}\n"
+                
+                briefing += "\n"
+                
+                # 오늘 온 메일 조회
+                try:
+                    gmail = get_gmail_service()
+                    emails = gmail.get_unread_emails(20)  # 더 많이 조회해서 필터링
+                    
+                    # 오늘 날짜 메일만 필터링
+                    today_str = now.strftime('%d %b %Y')  # "13 Dec 2025" 형식
+                    today_emails = []
+                    
+                    for email in emails:
+                        email_date = email.get('date', '')
+                        # 날짜 문자열에서 오늘 날짜 확인
+                        if today_str in email_date or now.strftime('%Y-%m-%d') in email_date:
+                            today_emails.append(email)
+                    
+                    if today_emails:
+                        briefing += f"📧 오늘 온 메일 ({len(today_emails)}개)\n\n"
+                        briefing += "─" * 30 + "\n\n"
+                        for i, email in enumerate(today_emails):
+                            # 보낸 사람 정리
+                            sender = email['from'].split('<')[0].strip()
+                            if not sender:
+                                sender = email['from']
+                            sender = sender.strip('"').strip("'")
+                            
+                            # 제목
+                            subject = email['subject']
+                            
+                            # 내용 미리보기
+                            snippet = email.get('snippet', '')[:80]
+                            if len(email.get('snippet', '')) > 80:
+                                snippet += "..."
+                            
+                            # 행간 + 구분선
+                            briefing += f"📌 {subject} - {sender}\n\n"
+                            if snippet:
+                                briefing += f"{snippet}\n"
+                            briefing += "\n"
+                            briefing += "─" * 30 + "\n\n"
+                    else:
+                        briefing += "📧 오늘 온 새 메일이 없습니다.\n"
+                except Exception as e:
+                    briefing += f"📧 메일 조회 실패: {str(e)}\n"
+                
+                briefing += "\n─" * 30
+                briefing += "\n💬 무엇을 도와드릴까요?"
+                
+                self.after(0, lambda: self.add_message(briefing, is_user=False))
+                
+                # 음성 모드면 브리핑 읽어주기
+                if self.voice_mode:
+                    self.after(100, lambda: self.speak_text(briefing))
+                
+            except Exception as e:
+                self.after(0, lambda: self.add_message(
+                    f"❌ 브리핑 생성 오류: {str(e)}",
+                    is_user=False
+                ))
+        
+        self.add_message("📋 오늘의 브리핑을 준비하고 있습니다...", is_user=False)
+        threading.Thread(target=fetch_briefing, daemon=True).start()
     
     def register_hotkey(self):
         """글로벌 핫키 등록"""
