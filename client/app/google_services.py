@@ -106,6 +106,57 @@ class CalendarService:
         """내일 일정 조회"""
         return self.get_events_for_date(datetime.now() + timedelta(days=1))
     
+    def get_events_for_range(self, start_date: datetime, end_date: datetime, 
+                              max_results: int = 50) -> List[Dict]:
+        """날짜 범위의 일정 조회"""
+        if not self.service:
+            if not self.connect():
+                return []
+        
+        try:
+            # 시작일 00:00, 종료일 23:59 (로컬 시간대 사용)
+            start_of_range = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
+            end_of_range = end_date.replace(hour=23, minute=59, second=59, microsecond=0)
+            
+            # 로컬 시간대 오프셋 계산 (한국: +09:00)
+            import time
+            utc_offset = -time.timezone if time.daylight == 0 else -time.altzone
+            offset_hours = utc_offset // 3600
+            offset_mins = (abs(utc_offset) % 3600) // 60
+            tz_str = f"{offset_hours:+03d}:{offset_mins:02d}"
+            
+            # RFC3339 형식으로 시간대 포함
+            time_min = start_of_range.strftime(f"%Y-%m-%dT%H:%M:%S{tz_str}")
+            time_max = end_of_range.strftime(f"%Y-%m-%dT%H:%M:%S{tz_str}")
+            
+            events_result = self.service.events().list(
+                calendarId='primary',
+                timeMin=time_min,
+                timeMax=time_max,
+                maxResults=max_results,
+                singleEvents=True,
+                orderBy='startTime'
+            ).execute()
+            
+            events = events_result.get('items', [])
+            
+            result = []
+            for event in events:
+                start = event['start'].get('dateTime', event['start'].get('date'))
+                result.append({
+                    'id': event['id'],
+                    'title': event.get('summary', '(제목 없음)'),
+                    'start': start,
+                    'location': event.get('location', ''),
+                    'description': event.get('description', '')
+                })
+            
+            return result
+            
+        except Exception as e:
+            print(f"[Calendar] 범위 일정 조회 실패: {e}")
+            return []
+    
     def get_events_for_date(self, date: datetime) -> List[Dict]:
         """특정 날짜 일정 조회"""
         if not self.service:
@@ -113,15 +164,25 @@ class CalendarService:
                 return []
         
         try:
-            # 해당 날짜의 시작과 끝
+            # 해당 날짜의 시작과 끝 (로컬 시간대 사용)
             start_of_day = date.replace(hour=0, minute=0, second=0, microsecond=0)
             end_of_day = start_of_day + timedelta(days=1)
             
+            # 로컬 시간대 오프셋 계산
+            import time
+            utc_offset = -time.timezone if time.daylight == 0 else -time.altzone
+            offset_hours = utc_offset // 3600
+            offset_mins = (abs(utc_offset) % 3600) // 60
+            tz_str = f"{offset_hours:+03d}:{offset_mins:02d}"
+            
+            time_min = start_of_day.strftime(f"%Y-%m-%dT%H:%M:%S{tz_str}")
+            time_max = end_of_day.strftime(f"%Y-%m-%dT%H:%M:%S{tz_str}")
+            
             events_result = self.service.events().list(
                 calendarId='primary',
-                timeMin=start_of_day.isoformat() + 'Z',
-                timeMax=end_of_day.isoformat() + 'Z',
-                maxResults=10,
+                timeMin=time_min,
+                timeMax=time_max,
+                maxResults=20,
                 singleEvents=True,
                 orderBy='startTime'
             ).execute()
@@ -146,8 +207,9 @@ class CalendarService:
             return []
     
     def create_event(self, title: str, start_time: datetime, 
-                     duration_minutes: int = 60, location: str = "") -> Optional[Dict]:
-        """일정 생성"""
+                     duration_minutes: int = 60, location: str = "",
+                     recurrence: str = None, recurrence_count: int = 10) -> Optional[Dict]:
+        """일정 생성 (반복 일정 지원)"""
         if not self.service:
             if not self.connect():
                 return None
@@ -168,24 +230,36 @@ class CalendarService:
                 },
             }
             
+            # 반복 규칙 추가
+            if recurrence:
+                rrule = self._build_recurrence_rule(recurrence, recurrence_count)
+                if rrule:
+                    event['recurrence'] = [rrule]
+            
             created_event = self.service.events().insert(
                 calendarId='primary', body=event
             ).execute()
             
-            return {
+            result = {
                 'id': created_event['id'],
                 'title': title,
                 'start': start_time.isoformat(),
                 'link': created_event.get('htmlLink', '')
             }
             
+            if recurrence:
+                result['recurrence'] = recurrence
+            
+            return result
+            
         except Exception as e:
             print(f"[Calendar] 일정 생성 실패: {e}")
             return None
     
     def create_all_day_event(self, title: str, start_date: datetime, 
-                              end_date: datetime = None, location: str = "") -> Optional[Dict]:
-        """종일 일정 생성 (단일/기간)"""
+                              end_date: datetime = None, location: str = "",
+                              recurrence: str = None, recurrence_count: int = 10) -> Optional[Dict]:
+        """종일 일정 생성 (단일/기간/반복 지원)"""
         if not self.service:
             if not self.connect():
                 return None
@@ -206,11 +280,17 @@ class CalendarService:
                 },
             }
             
+            # 반복 규칙 추가
+            if recurrence:
+                rrule = self._build_recurrence_rule(recurrence, recurrence_count)
+                if rrule:
+                    event['recurrence'] = [rrule]
+            
             created_event = self.service.events().insert(
                 calendarId='primary', body=event
             ).execute()
             
-            return {
+            result = {
                 'id': created_event['id'],
                 'title': title,
                 'start': start_date.strftime('%Y-%m-%d'),
@@ -218,9 +298,30 @@ class CalendarService:
                 'link': created_event.get('htmlLink', '')
             }
             
+            if recurrence:
+                result['recurrence'] = recurrence
+            
+            return result
+            
         except Exception as e:
             print(f"[Calendar] 종일 일정 생성 실패: {e}")
             return None
+    
+    def _build_recurrence_rule(self, recurrence: str, count: int = 10) -> Optional[str]:
+        """반복 규칙(RRULE) 생성"""
+        freq_map = {
+            'yearly': 'YEARLY',
+            'monthly': 'MONTHLY',
+            'weekly': 'WEEKLY',
+            'daily': 'DAILY'
+        }
+        
+        freq = freq_map.get(recurrence.lower())
+        if not freq:
+            return None
+        
+        # COUNT로 반복 횟수 제한 (무한 반복 방지)
+        return f"RRULE:FREQ={freq};COUNT={count}"
     
     def update_event(self, event_id: str, title: str = None, 
                      start_time: datetime = None, duration_minutes: int = None) -> Optional[Dict]:

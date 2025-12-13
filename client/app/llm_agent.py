@@ -33,17 +33,38 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "check_calendar",
-            "description": "오늘 또는 특정 날짜의 일정을 확인합니다. 예: '오늘 일정', '내일 뭐 있어?', '이번 주 일정'",
+            "description": "일정을 확인합니다. 다양한 기간 표현 지원: 오늘/내일/모레, 이번주/다음주/저번주, 이번달/다음달/저번달, 특정 월(12월, 2024년 1월), 날짜 범위 등",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "date": {
+                    "period_type": {
                         "type": "string",
-                        "description": "확인할 날짜. 'today', 'tomorrow', 또는 'YYYY-MM-DD' 형식",
-                        "default": "today"
+                        "description": "조회 유형: 'day'(특정일), 'week'(주), 'month'(월), 'range'(범위)",
+                        "enum": ["day", "week", "month", "range"]
+                    },
+                    "relative": {
+                        "type": "string",
+                        "description": "상대 표현: 'current'(이번), 'next'(다음), 'previous'(저번/지난). day의 경우 'today', 'tomorrow', 'day_after'(모레)",
+                        "enum": ["current", "next", "previous", "today", "tomorrow", "day_after"]
+                    },
+                    "year": {
+                        "type": "integer",
+                        "description": "연도 (예: 2024, 2025). 생략시 현재 연도"
+                    },
+                    "month": {
+                        "type": "integer",
+                        "description": "월 (1-12). period_type이 'month'일 때 특정 월 지정"
+                    },
+                    "start_date": {
+                        "type": "string",
+                        "description": "시작 날짜 (YYYY-MM-DD). period_type이 'range'나 'day'일 때 사용"
+                    },
+                    "end_date": {
+                        "type": "string",
+                        "description": "종료 날짜 (YYYY-MM-DD). period_type이 'range'일 때 사용"
                     }
                 },
-                "required": []
+                "required": ["period_type"]
             }
         }
     },
@@ -51,7 +72,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "add_calendar_event",
-            "description": "새로운 일정을 추가합니다. 하루 또는 여러 날에 걸친 일정 모두 가능. 예: '내일 3시에 회의', '12/11부터 12/13까지 출장'",
+            "description": "새로운 일정을 추가합니다. 단일/여러날/반복 일정 모두 지원. 예: '내일 3시에 회의', '12/11부터 12/13까지 출장', '매년 12월 25일 크리스마스', '매월 1일 월급날', '매주 월요일 팀미팅'",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -79,7 +100,17 @@ TOOLS = [
                     "is_all_day": {
                         "type": "boolean",
                         "description": "종일 일정 여부. 기간 일정(여러 날)은 보통 종일 일정",
-                        "default": false
+                        "default": False
+                    },
+                    "recurrence": {
+                        "type": "string",
+                        "description": "반복 주기. 'yearly'(매년), 'monthly'(매월), 'weekly'(매주), 'daily'(매일). 반복 일정이 아니면 생략",
+                        "enum": ["yearly", "monthly", "weekly", "daily"]
+                    },
+                    "recurrence_count": {
+                        "type": "integer",
+                        "description": "반복 횟수. 생략하면 무한 반복 (10년치)",
+                        "default": 10
                     }
                 },
                 "required": ["title", "start_date"]
@@ -172,19 +203,57 @@ def get_system_prompt() -> str:
 ## 현재 시간 정보
 - 오늘 날짜: {now.strftime('%Y년 %m월 %d일')} ({weekday})
 - 현재 시간: {now.strftime('%H시 %M분')}
+- 현재 연도: {now.year}년
+- 현재 월: {now.month}월
 
 ## 사용 가능한 기능
-1. 일정 확인 - 오늘/내일/특정 날짜의 캘린더 일정 확인
-2. 일정 추가 - 새로운 일정을 캘린더에 추가 (단일/기간 일정 모두 가능)
-3. 일정 수정 - 기존 일정의 시간이나 제목 변경
-4. 일정 삭제 - 일정 취소/삭제 (날짜나 제목으로 검색 가능)
-5. 이메일 확인 - 읽지 않은 이메일 확인
+1. 일정 확인 (check_calendar) - 다양한 기간의 일정 조회
+2. 일정 추가 (add_calendar_event) - 새로운 일정 추가
+3. 일정 수정 (update_calendar_event) - 기존 일정 수정
+4. 일정 삭제 (delete_calendar_event) - 일정 삭제
+5. 이메일 확인 (check_email) - 읽지 않은 이메일 확인
+
+## 일정 확인 (check_calendar) 사용법
+
+### 필수 파라미터: period_type
+- "day": 특정 하루 (오늘, 내일, 모레, 어제, 특정 날짜)
+- "week": 주 단위 (이번주, 다음주, 저번주)
+- "month": 월 단위 (이번달, 다음달, 저번달, 특정 월)
+- "range": 날짜 범위 (시작일~종료일)
+
+### relative 파라미터 (상대 표현)
+- "current": 이번 (이번주, 이번달)
+- "next": 다음 (다음주, 다음달, 내일)
+- "previous": 저번/지난 (저번주, 저번달, 어제)
+- "today": 오늘
+- "tomorrow": 내일
+- "day_after": 모레
+
+### 예시 매핑
+- "오늘 일정" → period_type="day", relative="today"
+- "내일 일정" → period_type="day", relative="tomorrow"
+- "이번주 일정" → period_type="week", relative="current"
+- "다음주 일정" → period_type="week", relative="next"
+- "저번주 일정" → period_type="week", relative="previous"
+- "이번달 일정" → period_type="month", relative="current"
+- "다음달 일정" → period_type="month", relative="next"
+- "12월 일정" → period_type="month", month=12, year={now.year}
+- "24년 12월 일정" → period_type="month", month=12, year=2024
+- "2024년 1월 일정" → period_type="month", month=1, year=2024
 
 ## 날짜 처리 규칙
 - "오늘" = {now.strftime('%Y-%m-%d')}
 - "내일" = {(now + timedelta(days=1)).strftime('%Y-%m-%d')}
 - "모레" = {(now + timedelta(days=2)).strftime('%Y-%m-%d')}
-- "다음주 월요일" 같은 표현도 계산해서 YYYY-MM-DD 형식으로 변환
+- "XX년"이라고 하면 20XX년으로 해석 (예: 24년 = 2024년, 25년 = 2025년)
+- 연도 없이 "12월"이라고 하면 현재 연도({now.year}년) 기준
+
+## 반복 일정 추가 (add_calendar_event)
+- "매년" → recurrence="yearly" (예: 매년 12월 25일 크리스마스)
+- "매월" → recurrence="monthly" (예: 매월 1일 월급날)
+- "매주" → recurrence="weekly" (예: 매주 월요일 팀미팅)
+- "매일" → recurrence="daily" (예: 매일 아침 운동)
+- recurrence_count는 반복 횟수 (기본 10회)
 
 일정이나 이메일 관련 요청이면 반드시 해당 함수를 호출하세요.
 그 외의 일반적인 질문에는 직접 답변해주세요.
@@ -267,34 +336,154 @@ class LLMAgent:
         return "\n\n".join(results)
     
     def _check_calendar(self, args: Dict[str, Any]) -> str:
-        """일정 확인"""
+        """일정 확인 (다양한 기간 지원)"""
         if not GOOGLE_AVAILABLE:
             return "📅 Google 캘린더가 연결되지 않았습니다.\n\n'Google 로그인' 버튼을 클릭해주세요."
         
         try:
             calendar = get_calendar_service()
-            date_str = args.get("date", "today")
+            now = datetime.now()
             
-            if date_str == "today":
-                events = calendar.get_today_events()
-                date_label = "오늘"
-            elif date_str == "tomorrow":
-                events = calendar.get_tomorrow_events()
-                date_label = "내일"
+            period_type = args.get("period_type", "day")
+            relative = args.get("relative", "current")
+            year = args.get("year", now.year)
+            month = args.get("month")
+            start_date_str = args.get("start_date")
+            end_date_str = args.get("end_date")
+            
+            # === 날짜 범위 결정 ===
+            
+            if period_type == "day":
+                # 특정 일
+                if start_date_str:
+                    try:
+                        start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
+                    except:
+                        start_date = now
+                    date_label = start_date.strftime('%Y-%m-%d')
+                elif relative == "today" or relative == "current":
+                    start_date = now
+                    date_label = "오늘"
+                elif relative == "tomorrow" or relative == "next":
+                    start_date = now + timedelta(days=1)
+                    date_label = "내일"
+                elif relative == "day_after":
+                    start_date = now + timedelta(days=2)
+                    date_label = "모레"
+                elif relative == "previous":
+                    start_date = now - timedelta(days=1)
+                    date_label = "어제"
+                else:
+                    start_date = now
+                    date_label = "오늘"
+                end_date = start_date
+                
+            elif period_type == "week":
+                # 주 단위
+                days_since_monday = now.weekday()
+                
+                if relative == "current":
+                    start_date = now - timedelta(days=days_since_monday)
+                    date_label = "이번 주"
+                elif relative == "next":
+                    start_date = now - timedelta(days=days_since_monday) + timedelta(weeks=1)
+                    date_label = "다음 주"
+                elif relative == "previous":
+                    start_date = now - timedelta(days=days_since_monday) - timedelta(weeks=1)
+                    date_label = "저번 주"
+                else:
+                    start_date = now - timedelta(days=days_since_monday)
+                    date_label = "이번 주"
+                
+                end_date = start_date + timedelta(days=6)
+                date_label += f" ({start_date.strftime('%m/%d')}~{end_date.strftime('%m/%d')})"
+                
+            elif period_type == "month":
+                # 월 단위
+                target_year = year
+                
+                if month:
+                    # 특정 월 지정 (예: 12월, 2024년 1월)
+                    target_month = month
+                    date_label = f"{target_year}년 {target_month}월"
+                elif relative == "current":
+                    target_month = now.month
+                    target_year = now.year
+                    date_label = "이번 달"
+                elif relative == "next":
+                    if now.month == 12:
+                        target_month = 1
+                        target_year = now.year + 1
+                    else:
+                        target_month = now.month + 1
+                        target_year = now.year
+                    date_label = "다음 달"
+                elif relative == "previous":
+                    if now.month == 1:
+                        target_month = 12
+                        target_year = now.year - 1
+                    else:
+                        target_month = now.month - 1
+                        target_year = now.year
+                    date_label = "저번 달"
+                else:
+                    target_month = now.month
+                    target_year = now.year
+                    date_label = "이번 달"
+                
+                # 월의 시작과 끝
+                start_date = datetime(target_year, target_month, 1)
+                if target_month == 12:
+                    end_date = datetime(target_year + 1, 1, 1) - timedelta(days=1)
+                else:
+                    end_date = datetime(target_year, target_month + 1, 1) - timedelta(days=1)
+                
+                date_label += f" ({start_date.strftime('%Y-%m-%d')}~{end_date.strftime('%Y-%m-%d')})"
+                
+            elif period_type == "range":
+                # 범위 지정
+                try:
+                    start_date = datetime.strptime(start_date_str, "%Y-%m-%d") if start_date_str else now
+                    end_date = datetime.strptime(end_date_str, "%Y-%m-%d") if end_date_str else start_date
+                except:
+                    start_date = now
+                    end_date = now
+                date_label = f"{start_date.strftime('%m/%d')} ~ {end_date.strftime('%m/%d')}"
+            
             else:
-                # 특정 날짜 처리 (추후 구현)
-                events = calendar.get_today_events()
-                date_label = date_str
+                start_date = now
+                end_date = now
+                date_label = "오늘"
+            
+            # === 일정 조회 ===
+            if start_date.date() == end_date.date():
+                events = calendar.get_events_for_date(start_date)
+            else:
+                events = calendar.get_events_for_range(start_date, end_date)
             
             if not events:
                 return f"📅 {date_label} 일정이 없습니다."
             
             response = f"📅 {date_label} 일정 ({len(events)}개):\n\n"
+            
+            current_date = None
             for event in events:
-                time_str = event['start']
-                if 'T' in time_str:
-                    time_str = time_str.split('T')[1][:5]
-                response += f"• {time_str} - {event['title']}\n"
+                event_start = event['start']
+                
+                # 날짜와 시간 분리
+                if 'T' in event_start:
+                    event_date = event_start.split('T')[0]
+                    event_time = event_start.split('T')[1][:5]
+                else:
+                    event_date = event_start
+                    event_time = "종일"
+                
+                # 날짜가 바뀌면 헤더 추가 (기간 조회 시)
+                if start_date.date() != end_date.date() and event_date != current_date:
+                    current_date = event_date
+                    response += f"\n📆 {event_date}\n"
+                
+                response += f"  • {event_time} - {event['title']}\n"
             
             return response
             
@@ -302,7 +491,7 @@ class LLMAgent:
             return f"📅 일정 확인 오류: {str(e)}"
     
     def _add_calendar_event(self, args: Dict[str, Any]) -> str:
-        """일정 추가 (단일/기간 일정 지원)"""
+        """일정 추가 (단일/기간/반복 일정 지원)"""
         if not GOOGLE_AVAILABLE:
             return "📅 Google 캘린더가 연결되지 않았습니다."
         
@@ -315,9 +504,20 @@ class LLMAgent:
             time_str = args.get("time")
             duration = args.get("duration", 60)
             is_all_day = args.get("is_all_day", False)
+            recurrence = args.get("recurrence")  # yearly, monthly, weekly, daily
+            recurrence_count = args.get("recurrence_count", 10)
             
             # 시작 날짜 파싱
             start_date = self._parse_date(start_date_str)
+            
+            # 반복 주기 한글 매핑
+            recurrence_labels = {
+                'yearly': '매년',
+                'monthly': '매월',
+                'weekly': '매주',
+                'daily': '매일'
+            }
+            recurrence_label = recurrence_labels.get(recurrence, '')
             
             # 종료 날짜가 있으면 기간 일정 (종일 일정으로 처리)
             if end_date_str:
@@ -325,19 +525,31 @@ class LLMAgent:
                 # 종료 날짜는 다음 날까지 포함 (Google Calendar 종일 이벤트 특성)
                 end_date = end_date + timedelta(days=1)
                 
-                result = calendar.create_all_day_event(title, start_date, end_date)
+                result = calendar.create_all_day_event(
+                    title, start_date, end_date, 
+                    recurrence=recurrence, recurrence_count=recurrence_count
+                )
                 
                 if result:
-                    return f"✅ 일정이 추가되었습니다!\n\n📅 {title}\n📆 {start_date.strftime('%Y-%m-%d')} ~ {(end_date - timedelta(days=1)).strftime('%Y-%m-%d')}"
+                    msg = f"✅ 일정이 추가되었습니다!\n\n📅 {title}\n📆 {start_date.strftime('%Y-%m-%d')} ~ {(end_date - timedelta(days=1)).strftime('%Y-%m-%d')}"
+                    if recurrence:
+                        msg += f"\n🔁 {recurrence_label} 반복 ({recurrence_count}회)"
+                    return msg
                 else:
                     return "❌ 일정 추가에 실패했습니다."
             
             # 종일 일정
             elif is_all_day or not time_str:
-                result = calendar.create_all_day_event(title, start_date)
+                result = calendar.create_all_day_event(
+                    title, start_date,
+                    recurrence=recurrence, recurrence_count=recurrence_count
+                )
                 
                 if result:
-                    return f"✅ 일정이 추가되었습니다!\n\n📅 {title}\n📆 {start_date.strftime('%Y-%m-%d')} (종일)"
+                    msg = f"✅ 일정이 추가되었습니다!\n\n📅 {title}\n📆 {start_date.strftime('%Y-%m-%d')} (종일)"
+                    if recurrence:
+                        msg += f"\n🔁 {recurrence_label} 반복 ({recurrence_count}회)"
+                    return msg
                 else:
                     return "❌ 일정 추가에 실패했습니다."
             
@@ -349,10 +561,16 @@ class LLMAgent:
                     hour, minute = 9, 0
                 
                 start_time = start_date.replace(hour=hour, minute=minute, second=0, microsecond=0)
-                result = calendar.create_event(title, start_time, duration)
+                result = calendar.create_event(
+                    title, start_time, duration,
+                    recurrence=recurrence, recurrence_count=recurrence_count
+                )
                 
                 if result:
-                    return f"✅ 일정이 추가되었습니다!\n\n📅 {title}\n🕐 {start_time.strftime('%Y-%m-%d %H:%M')}"
+                    msg = f"✅ 일정이 추가되었습니다!\n\n📅 {title}\n🕐 {start_time.strftime('%Y-%m-%d %H:%M')}"
+                    if recurrence:
+                        msg += f"\n🔁 {recurrence_label} 반복 ({recurrence_count}회)"
+                    return msg
                 else:
                     return "❌ 일정 추가에 실패했습니다."
             

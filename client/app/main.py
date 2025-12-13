@@ -9,8 +9,18 @@ import subprocess
 import sys
 import os
 import time
+import io
 import requests
 from datetime import datetime, timedelta
+
+# 음성 녹음 관련 임포트
+try:
+    import sounddevice as sd
+    import soundfile as sf
+    import numpy as np
+    AUDIO_AVAILABLE = True
+except ImportError:
+    AUDIO_AVAILABLE = False
 
 # 프로젝트 루트 경로 (먼저 정의)
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -251,6 +261,24 @@ class SionApp(ctk.CTk):
         self.input_entry.grid(row=0, column=0, padx=(15, 10), pady=12, sticky="ew")
         self.input_entry.bind("<Return>", self.on_send)
         
+        # 마이크 버튼 (음성 입력)
+        self.is_recording = False
+        self.mic_button = ctk.CTkButton(
+            input_frame,
+            text="🎤",
+            width=45,
+            height=45,
+            font=("맑은 고딕", 16),
+            corner_radius=22,
+            fg_color="#4CAF50" if AUDIO_AVAILABLE else "#888888",
+            hover_color="#45a049" if AUDIO_AVAILABLE else "#888888",
+            command=self.toggle_recording
+        )
+        self.mic_button.grid(row=0, column=1, padx=(0, 5), pady=12)
+        
+        if not AUDIO_AVAILABLE:
+            self.mic_button.configure(state="disabled")
+        
         # 전송 버튼
         self.send_button = ctk.CTkButton(
             input_frame,
@@ -261,7 +289,7 @@ class SionApp(ctk.CTk):
             corner_radius=20,
             command=self.on_send
         )
-        self.send_button.grid(row=0, column=1, padx=(0, 15), pady=12)
+        self.send_button.grid(row=0, column=2, padx=(0, 15), pady=12)
     
     def add_message(self, message: str, is_user: bool = True):
         """채팅에 메시지 추가"""
@@ -535,6 +563,169 @@ class SionApp(ctk.CTk):
         for e in entities:
             lines.append(f"- {e['type']}: {e['value']}")
         return "\n".join(lines)
+    
+    def toggle_recording(self):
+        """음성 녹음 토글"""
+        if not AUDIO_AVAILABLE:
+            self.add_message("❌ 음성 기능을 사용할 수 없습니다.\n\npip install sounddevice soundfile numpy", is_user=False)
+            return
+        
+        if self.is_recording:
+            # 녹음 중지 (녹음은 자동으로 종료됨)
+            return
+        
+        # 녹음 시작
+        self.is_recording = True
+        self.mic_button.configure(
+            text="🔴",
+            fg_color="#F44336",
+            hover_color="#D32F2F"
+        )
+        self.add_message("🎤 녹음 중... (최대 10초, 말씀이 끝나면 자동 종료)", is_user=False)
+        
+        # 백그라운드에서 녹음
+        threading.Thread(target=self.record_audio, daemon=True).start()
+    
+    def record_audio(self):
+        """음성 녹음 및 처리"""
+        try:
+            # 녹음 설정
+            sample_rate = 16000
+            max_duration = 10  # 최대 10초
+            silence_threshold = 0.01
+            silence_duration = 1.5  # 1.5초 무음 시 종료
+            
+            frames = []
+            silence_frames = 0
+            max_silence_frames = int(silence_duration * sample_rate / 1024)
+            max_frames = int(max_duration * sample_rate / 1024)
+            voice_detected = False
+            
+            def audio_callback(indata, frame_count, time_info, status):
+                nonlocal silence_frames, voice_detected
+                frames.append(indata.copy())
+                
+                # 에너지 계산
+                energy = np.abs(indata).mean()
+                
+                if energy > silence_threshold:
+                    voice_detected = True
+                    silence_frames = 0
+                elif voice_detected:
+                    silence_frames += 1
+            
+            # 녹음 시작
+            with sd.InputStream(
+                samplerate=sample_rate,
+                channels=1,
+                dtype='float32',
+                blocksize=1024,
+                callback=audio_callback
+            ):
+                while len(frames) < max_frames and self.is_recording:
+                    sd.sleep(100)  # 100ms 대기
+                    
+                    # 음성 감지 후 무음이 지속되면 종료
+                    if voice_detected and silence_frames >= max_silence_frames:
+                        break
+            
+            # 녹음 종료
+            self.is_recording = False
+            self.after(0, lambda: self.mic_button.configure(
+                text="🎤",
+                fg_color="#4CAF50",
+                hover_color="#45a049"
+            ))
+            
+            if not frames:
+                self.after(0, lambda: self.add_message("❌ 녹음된 오디오가 없습니다.", is_user=False))
+                return
+            
+            # 오디오 데이터 결합
+            audio_data = np.concatenate(frames, axis=0)
+            duration = len(audio_data) / sample_rate
+            
+            self.after(0, lambda: self.add_message(f"🎤 녹음 완료 ({duration:.1f}초) - 음성 인식 중...", is_user=False))
+            
+            # WAV 바이트로 변환
+            buffer = io.BytesIO()
+            sf.write(buffer, audio_data, sample_rate, format='WAV')
+            buffer.seek(0)
+            audio_bytes = buffer.read()
+            
+            # ASR 서비스 호출
+            self.transcribe_audio(audio_bytes)
+            
+        except Exception as e:
+            self.is_recording = False
+            self.after(0, lambda: self.mic_button.configure(
+                text="🎤",
+                fg_color="#4CAF50",
+                hover_color="#45a049"
+            ))
+            self.after(0, lambda: self.add_message(f"❌ 녹음 오류: {str(e)}", is_user=False))
+    
+    def transcribe_audio(self, audio_bytes: bytes):
+        """음성을 텍스트로 변환"""
+        try:
+            # ASR 서비스 호출 시도
+            try:
+                files = {'file': ('audio.wav', audio_bytes, 'audio/wav')}
+                response = requests.post(
+                    "http://127.0.0.1:8001/transcribe",
+                    files=files,
+                    timeout=30
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    text = result.get("text", "").strip()
+                    
+                    if text:
+                        self.after(0, lambda t=text: self.add_message(f"🗣️ \"{t}\"", is_user=True))
+                        # 텍스트로 에이전트 호출
+                        threading.Thread(target=self.process_message, args=(text,), daemon=True).start()
+                    else:
+                        self.after(0, lambda: self.add_message("❌ 음성을 인식하지 못했습니다.", is_user=False))
+                    return
+            except requests.exceptions.ConnectionError:
+                pass  # ASR 서비스가 실행 중이지 않으면 OpenAI Whisper API 사용
+            
+            # 폴백: OpenAI Whisper API 사용
+            if OPENAI_AVAILABLE:
+                api_key = os.getenv("OPENAI_API_KEY")
+                if api_key and api_key != "여기에-API-키-입력":
+                    from openai import OpenAI
+                    client = OpenAI(api_key=api_key)
+                    
+                    # 바이트를 파일 객체로 변환
+                    audio_file = io.BytesIO(audio_bytes)
+                    audio_file.name = "audio.wav"
+                    
+                    transcript = client.audio.transcriptions.create(
+                        model="whisper-1",
+                        file=audio_file,
+                        language="ko"
+                    )
+                    
+                    text = transcript.text.strip()
+                    
+                    if text:
+                        self.after(0, lambda t=text: self.add_message(f"🗣️ \"{t}\"", is_user=True))
+                        threading.Thread(target=self.process_message, args=(text,), daemon=True).start()
+                    else:
+                        self.after(0, lambda: self.add_message("❌ 음성을 인식하지 못했습니다.", is_user=False))
+                    return
+            
+            self.after(0, lambda: self.add_message(
+                "❌ 음성 인식 서비스를 사용할 수 없습니다.\n\n"
+                "- ASR 서비스(8001)가 실행 중이거나\n"
+                "- OpenAI API 키가 설정되어 있어야 합니다.",
+                is_user=False
+            ))
+            
+        except Exception as e:
+            self.after(0, lambda: self.add_message(f"❌ 음성 인식 오류: {str(e)}", is_user=False))
     
     def google_login(self):
         """Google 로그인"""
