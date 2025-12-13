@@ -201,7 +201,7 @@ class SionApp(ctk.CTk):
         
         # 글로벌 핫키 설정
         self.hotkey_registered = False
-        self.hotkey_combo = "ctrl+shift+s"  # 기본 단축키
+        self.hotkey_combo = "ctrl+shift+."  # 기본 단축키
         
         # UI 구성
         self.setup_ui()
