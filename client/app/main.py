@@ -449,6 +449,9 @@ class SionApp(ctk.CTk):
         self.attributes('-alpha', 1.0)  # 바로 표시
         self.lift()
         self.focus_force()
+        
+        # 자동 로그인 시도
+        self.after(500, self.try_auto_login)
     
     def center_window(self, width, height):
         """창을 화면 중앙에 배치"""
@@ -575,12 +578,6 @@ class SionApp(ctk.CTk):
         )
         self.chat_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
         self.chat_frame.grid_columnconfigure(0, weight=1)
-        
-        # 환영 메시지
-        welcome_msg = "안녕하세요! SION입니다. 무엇을 도와드릴까요?"
-        if HOTKEY_AVAILABLE:
-            welcome_msg += f"\n\n💡 Tip: {self.hotkey_combo.upper()} 키로 어디서든 호출 가능!"
-        self.add_message(welcome_msg, is_user=False)
         
         # === 입력 영역 ===
         input_frame = ctk.CTkFrame(
@@ -1184,6 +1181,75 @@ class SionApp(ctk.CTk):
                 self.is_speaking = False
         
         threading.Thread(target=do_speak, daemon=True).start()
+    
+    def try_auto_login(self):
+        """앱 시작 시 자동 로그인 시도"""
+        if not GOOGLE_AVAILABLE:
+            return
+        
+        def do_auto_login():
+            try:
+                auth_manager = get_auth_manager()
+                
+                # 이미 유효한 토큰이 있는지 확인
+                if auth_manager.is_authenticated():
+                    # 이미 로그인됨
+                    self.after(0, self._on_auto_login_success)
+                    return
+                
+                # 토큰이 만료되었지만 갱신 가능한 경우
+                if auth_manager.creds and auth_manager.creds.expired and auth_manager.creds.refresh_token:
+                    self.after(0, lambda: self.add_message(
+                        "🔄 Google 인증 갱신 중...",
+                        is_user=False
+                    ))
+                    if auth_manager.authenticate():
+                        self.after(0, self._on_auto_login_success)
+                        return
+                
+                # 자동 로그인 실패 - 수동 로그인 안내
+                tip = ""
+                if HOTKEY_AVAILABLE:
+                    tip = f"\n\n💡 Tip: {self.hotkey_combo.upper()} 키로 어디서든 호출 가능!"
+                self.after(0, lambda: self.add_message(
+                    "👋 안녕하세요! SION입니다.\n\n"
+                    "Google 로그인이 필요합니다.\n"
+                    f"상단의 'Google 로그인' 버튼을 클릭해주세요.{tip}",
+                    is_user=False
+                ))
+                
+            except Exception as e:
+                print(f"[AutoLogin] 오류: {e}")
+                tip = ""
+                if HOTKEY_AVAILABLE:
+                    tip = f"\n\n💡 Tip: {self.hotkey_combo.upper()} 키로 어디서든 호출 가능!"
+                self.after(0, lambda: self.add_message(
+                    "👋 안녕하세요! SION입니다.\n\n"
+                    f"Google 로그인을 위해 상단 버튼을 클릭해주세요.{tip}",
+                    is_user=False
+                ))
+        
+        threading.Thread(target=do_auto_login, daemon=True).start()
+    
+    def _on_auto_login_success(self):
+        """자동 로그인 성공 시 처리"""
+        tip_msg = ""
+        if HOTKEY_AVAILABLE:
+            tip_msg = f"\n\n💡 Tip: {self.hotkey_combo.upper()} 키로 어디서든 호출 가능!"
+        self.add_message(f"✅ Google 자동 로그인 성공!{tip_msg}", is_user=False)
+        
+        # 버튼 상태 업데이트
+        self.google_btn.configure(
+            text="✓ 연결됨",
+            fg_color=COLORS["primary"],
+            border_color=COLORS["primary_light"]
+        )
+        
+        # 캘린더/메일 바로가기 버튼 표시
+        self.show_google_shortcuts()
+        
+        # 오늘의 브리핑 자동 실행
+        self.after(500, self.show_daily_briefing)
     
     def google_login(self):
         """Google 로그인"""
