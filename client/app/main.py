@@ -418,6 +418,15 @@ class SionApp(ctk.CTk):
         self.hotkey_registered = False
         self.hotkey_combo = "ctrl+shift+."  # 기본 단축키
         
+        # 알림 모니터링
+        self.monitoring_active = False
+        self.last_checked_email_ids = set()  # 마지막 확인한 메일 ID들
+        self.email_check_interval = 30000  # 30초 (밀리초)
+        self.schedule_check_interval = 60000  # 1분 (밀리초)
+        self.notified_events = set()  # 이미 알림한 일정 ID들
+        self.waiting_for_response = False  # 알림 응답 대기 중
+        self.pending_notification = None  # 대기 중인 알림 정보
+        
         # UI 구성
         self.setup_ui()
         
@@ -1250,6 +1259,9 @@ class SionApp(ctk.CTk):
         
         # 오늘의 브리핑 자동 실행
         self.after(500, self.show_daily_briefing)
+        
+        # 메일/스케줄 모니터링 시작
+        self.after(3000, self.start_monitoring)
     
     def google_login(self):
         """Google 로그인"""
@@ -1280,6 +1292,8 @@ class SionApp(ctk.CTk):
                     self.after(0, self.show_google_shortcuts)
                     # 로그인 성공 후 오늘의 브리핑 자동 실행
                     self.after(500, self.show_daily_briefing)
+                    # 메일/스케줄 모니터링 시작
+                    self.after(3000, self.start_monitoring)
                 else:
                     self.after(0, lambda: self.add_message(
                         "❌ Google 로그인에 실패했습니다.",
@@ -1309,6 +1323,316 @@ class SionApp(ctk.CTk):
         """Gmail 웹페이지 열기"""
         import webbrowser
         webbrowser.open("https://mail.google.com")
+    
+    # ========== 알림 모니터링 ==========
+    
+    def start_monitoring(self):
+        """메일/스케줄 모니터링 시작"""
+        if self.monitoring_active:
+            return
+        
+        self.monitoring_active = True
+        print("[Monitor] 모니터링 시작")
+        
+        # 초기 메일 ID 수집 (알림 없이)
+        self._initialize_email_ids()
+        
+        # 주기적 체크 시작
+        self.after(self.email_check_interval, self._check_new_emails)
+        self.after(self.schedule_check_interval, self._check_upcoming_events)
+    
+    def _initialize_email_ids(self):
+        """현재 읽지 않은 메일 ID 수집 (초기화용)"""
+        try:
+            gmail = get_gmail_service()
+            emails = gmail.get_unread_emails(20)
+            self.last_checked_email_ids = {email.get('id', '') for email in emails if email.get('id')}
+            print(f"[Monitor] 초기 메일 ID {len(self.last_checked_email_ids)}개 수집")
+        except Exception as e:
+            print(f"[Monitor] 초기 메일 수집 오류: {e}")
+    
+    def _check_new_emails(self):
+        """새 메일 확인 (주기적 실행)"""
+        if not self.monitoring_active:
+            return
+        
+        def check():
+            try:
+                gmail = get_gmail_service()
+                emails = gmail.get_unread_emails(10)
+                
+                current_ids = {email.get('id', '') for email in emails if email.get('id')}
+                new_ids = current_ids - self.last_checked_email_ids
+                
+                if new_ids:
+                    # 새 메일 발견
+                    new_emails = [e for e in emails if e.get('id') in new_ids]
+                    self.last_checked_email_ids = current_ids
+                    
+                    for email in new_emails:
+                        self.after(0, lambda e=email: self._notify_new_email(e))
+                        break  # 한 번에 하나씩 알림
+                
+            except Exception as e:
+                print(f"[Monitor] 메일 체크 오류: {e}")
+        
+        threading.Thread(target=check, daemon=True).start()
+        
+        # 다음 체크 예약
+        self.after(self.email_check_interval, self._check_new_emails)
+    
+    def _notify_new_email(self, email: dict):
+        """새 메일 알림"""
+        if self.waiting_for_response:
+            return  # 이미 응답 대기 중이면 스킵
+        
+        sender = email.get('from', '알 수 없음').split('<')[0].strip().strip('"').strip("'")
+        subject = email.get('subject', '제목 없음')
+        email_id = email.get('id', '')
+        
+        # 알림 메시지 표시
+        notify_msg = f"📬 새 메일이 도착했습니다!\n\n"
+        notify_msg += f"보낸 사람: {sender}\n"
+        notify_msg += f"제목: {subject}\n\n"
+        notify_msg += "🎤 '읽어줘', '열어줘', '괜찮아' 중 하나로 응답해주세요."
+        
+        self.add_message(notify_msg, is_user=False, streaming=True)
+        
+        # TTS로 알림
+        if TTS_AVAILABLE:
+            tts_msg = f"메일이 도착했습니다. {sender}님으로부터. 메일을 읽어드릴까요?"
+            self.speak_text(tts_msg)
+        
+        # 응답 대기 상태 설정
+        self.waiting_for_response = True
+        self.pending_notification = {
+            'type': 'email',
+            'data': email,
+            'sender': sender,
+            'subject': subject,
+            'email_id': email_id
+        }
+        
+        # 음성 인식 시작 (TTS 완료 후)
+        self.after(3000, self._start_notification_listening)
+    
+    def _start_notification_listening(self):
+        """알림 응답을 위한 음성 인식 시작"""
+        if not self.waiting_for_response:
+            return
+        
+        if AUDIO_AVAILABLE:
+            # 자동으로 음성 녹음 시작
+            self.after(500, self._record_notification_response)
+    
+    def _record_notification_response(self):
+        """알림 응답 녹음"""
+        if not self.waiting_for_response:
+            return
+        
+        def record_and_process():
+            try:
+                import sounddevice as sd
+                import soundfile as sf
+                import numpy as np
+                import tempfile
+                
+                # 5초간 녹음
+                duration = 5
+                sample_rate = 16000
+                
+                print("[Notification] 응답 녹음 시작...")
+                self.after(0, lambda: self.add_message("🎤 듣고 있습니다...", is_user=False))
+                
+                audio_data = sd.rec(
+                    int(duration * sample_rate),
+                    samplerate=sample_rate,
+                    channels=1,
+                    dtype=np.float32
+                )
+                sd.wait()
+                
+                # 임시 파일로 저장
+                with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
+                    temp_path = f.name
+                    sf.write(temp_path, audio_data, sample_rate)
+                
+                # STT 변환
+                text = self._transcribe_audio(temp_path)
+                os.remove(temp_path)
+                
+                if text:
+                    self.after(0, lambda: self._handle_notification_response(text))
+                else:
+                    self.after(0, self._end_notification_waiting)
+                    
+            except Exception as e:
+                print(f"[Notification] 녹음 오류: {e}")
+                self.after(0, self._end_notification_waiting)
+        
+        threading.Thread(target=record_and_process, daemon=True).start()
+    
+    def _transcribe_audio(self, audio_path: str) -> str:
+        """오디오를 텍스트로 변환"""
+        try:
+            from openai import OpenAI
+            client = OpenAI()
+            
+            with open(audio_path, 'rb') as audio_file:
+                transcript = client.audio.transcriptions.create(
+                    model="whisper-1",
+                    file=audio_file,
+                    language="ko"
+                )
+            return transcript.text.strip()
+        except Exception as e:
+            print(f"[STT] 변환 오류: {e}")
+            return ""
+    
+    def _handle_notification_response(self, response: str):
+        """알림 응답 처리"""
+        if not self.pending_notification:
+            self._end_notification_waiting()
+            return
+        
+        response_lower = response.lower()
+        notif_type = self.pending_notification['type']
+        
+        self.add_message(f"🗣️ \"{response}\"", is_user=True)
+        
+        if notif_type == 'email':
+            if any(word in response_lower for word in ['읽어', '읽어줘', '알려줘', '뭐야']):
+                # 메일 내용 읽기
+                sender = self.pending_notification['sender']
+                subject = self.pending_notification['subject']
+                reply = f"📧 {sender}님이 보낸 메일입니다.\n제목: {subject}"
+                self.add_message(reply, is_user=False, streaming=True)
+                if TTS_AVAILABLE:
+                    self.speak_text(f"{sender}님이 보낸 메일입니다. 제목은 {subject}입니다.")
+                    
+            elif any(word in response_lower for word in ['열어', '열어줘', '보여줘', '확인']):
+                # 메일 열기
+                import webbrowser
+                email_id = self.pending_notification.get('email_id', '')
+                if email_id:
+                    webbrowser.open(f"https://mail.google.com/mail/u/0/#inbox/{email_id}")
+                else:
+                    webbrowser.open("https://mail.google.com")
+                reply = "📧 메일을 열었습니다."
+                self.add_message(reply, is_user=False)
+                if TTS_AVAILABLE:
+                    self.speak_text("메일을 열었습니다.")
+                    
+            else:
+                # 거절 또는 기타
+                reply = "알겠습니다."
+                self.add_message(reply, is_user=False)
+                if TTS_AVAILABLE:
+                    self.speak_text("알겠습니다.")
+        
+        elif notif_type == 'schedule':
+            if any(word in response_lower for word in ['열어', '열어줘', '보여줘', '확인']):
+                # 캘린더 열기
+                import webbrowser
+                webbrowser.open("https://calendar.google.com")
+                reply = "📅 캘린더를 열었습니다."
+                self.add_message(reply, is_user=False)
+                if TTS_AVAILABLE:
+                    self.speak_text("캘린더를 열었습니다.")
+            else:
+                # 확인 또는 거절
+                reply = "알겠습니다."
+                self.add_message(reply, is_user=False)
+                if TTS_AVAILABLE:
+                    self.speak_text("알겠습니다.")
+        
+        self._end_notification_waiting()
+    
+    def _end_notification_waiting(self):
+        """알림 응답 대기 종료"""
+        self.waiting_for_response = False
+        self.pending_notification = None
+    
+    def _check_upcoming_events(self):
+        """다가오는 일정 확인 (주기적 실행)"""
+        if not self.monitoring_active:
+            return
+        
+        def check():
+            try:
+                calendar = get_calendar_service()
+                events = calendar.get_today_events()
+                
+                now = datetime.now()
+                
+                for event in events:
+                    event_id = event.get('id', '')
+                    if event_id in self.notified_events:
+                        continue
+                    
+                    # 시작 시간 파싱
+                    start_str = event.get('start', '')
+                    if 'T' not in start_str:
+                        continue  # 종일 일정은 스킵
+                    
+                    try:
+                        # ISO 형식 파싱
+                        start_time = datetime.fromisoformat(start_str.replace('Z', '+00:00'))
+                        # 로컬 시간으로 변환
+                        if start_time.tzinfo:
+                            start_time = start_time.replace(tzinfo=None)
+                        
+                        # 10분 전인지 확인
+                        time_diff = (start_time - now).total_seconds() / 60
+                        
+                        if 0 < time_diff <= 10:
+                            # 10분 이내에 시작하는 일정
+                            self.notified_events.add(event_id)
+                            self.after(0, lambda e=event, mins=int(time_diff): self._notify_upcoming_event(e, mins))
+                            break
+                            
+                    except Exception as e:
+                        print(f"[Monitor] 일정 시간 파싱 오류: {e}")
+                
+            except Exception as e:
+                print(f"[Monitor] 일정 체크 오류: {e}")
+        
+        threading.Thread(target=check, daemon=True).start()
+        
+        # 다음 체크 예약
+        self.after(self.schedule_check_interval, self._check_upcoming_events)
+    
+    def _notify_upcoming_event(self, event: dict, minutes_left: int):
+        """다가오는 일정 알림"""
+        if self.waiting_for_response:
+            return
+        
+        title = event.get('title', '일정')
+        
+        # 알림 메시지 표시
+        notify_msg = f"⏰ 일정 알림!\n\n"
+        notify_msg += f"'{title}' 시간이 {minutes_left}분 남았습니다.\n\n"
+        notify_msg += "🎤 '알았어', '열어줘' 중 하나로 응답해주세요."
+        
+        self.add_message(notify_msg, is_user=False, streaming=True)
+        
+        # TTS로 알림
+        if TTS_AVAILABLE:
+            tts_msg = f"{title} 일정이 {minutes_left}분 남았습니다."
+            self.speak_text(tts_msg)
+        
+        # 응답 대기 상태 설정
+        self.waiting_for_response = True
+        self.pending_notification = {
+            'type': 'schedule',
+            'data': event,
+            'title': title
+        }
+        
+        # 음성 인식 시작
+        self.after(3000, self._start_notification_listening)
+    
+    # ========== 일일 브리핑 ==========
     
     def show_daily_briefing(self):
         """오늘의 일정과 메일을 자동으로 정리해서 보여줌"""
