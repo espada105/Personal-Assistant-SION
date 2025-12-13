@@ -187,6 +187,11 @@ class SionApp(ctk.CTk):
         self.geometry("500x700")
         self.minsize(400, 500)
         
+        # 앱 아이콘 설정
+        icon_path = os.path.join(PROJECT_ROOT, "configs", "SION.ico")
+        if os.path.exists(icon_path):
+            self.iconbitmap(icon_path)
+        
         # 테마 설정
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
