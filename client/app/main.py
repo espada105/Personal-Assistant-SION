@@ -1321,7 +1321,7 @@ class SionApp(ctk.CTk):
                 except Exception as e:
                     briefing += f"📧 메일 조회 실패: {str(e)}\n"
                 
-                briefing += "\n─" * 30
+                briefing += "\n" + "─" * 30
                 briefing += "\n💬 무엇을 도와드릴까요?"
                 
                 # 스트리밍 타이핑 효과로 브리핑 표시
