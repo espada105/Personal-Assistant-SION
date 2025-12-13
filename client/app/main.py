@@ -384,8 +384,8 @@ class SionApp(ctk.CTk):
         self.geometry("900x600")
         self.minsize(600, 400)
         
-        # 화면 중앙에 배치
-        self.center_window(900, 600)
+        # 화면 중앙에 배치 (패널 열린 상태 기준: 700 + 480 = 1180)
+        self.center_window(1180, 650)
         
         # 시작 시 숨김 (스플래시 후 표시)
         self.withdraw()
@@ -420,7 +420,8 @@ class SionApp(ctk.CTk):
         
         # 알림 모니터링
         self.monitoring_active = False
-        self.last_checked_email_ids = set()  # 마지막 확인한 메일 ID들
+        self.monitoring_start_time = None  # 모니터링 시작 시간
+        self.notified_email_ids = set()  # 이미 알림한 메일 ID들
         self.email_check_interval = 30000  # 30초 (밀리초)
         self.schedule_check_interval = 60000  # 1분 (밀리초)
         self.notified_events = set()  # 이미 알림한 일정 ID들
@@ -459,6 +460,9 @@ class SionApp(ctk.CTk):
         self.lift()
         self.focus_force()
         
+        # 사이드 패널 기본으로 열기
+        self._open_side_panel_default()
+        
         # 자동 로그인 시도
         self.after(500, self.try_auto_login)
     
@@ -472,18 +476,23 @@ class SionApp(ctk.CTk):
     
     def setup_ui(self):
         """UI 구성 (모던 보라색 테마)"""
-        # 메인 컨테이너
+        # 메인 컨테이너 (채팅 + 사이드패널)
         self.grid_columnconfigure(0, weight=1)
+        self.grid_columnconfigure(1, weight=0)  # 사이드 패널
         self.grid_rowconfigure(1, weight=1)
         
-        # === 헤더 ===
+        # 사이드 패널 상태
+        self.side_panel_open = False
+        self.side_panel_width = 480  # 더 넓은 패널
+        
+        # === 헤더 (전체 너비) ===
         header_frame = ctk.CTkFrame(
             self, 
             fg_color=COLORS["bg_main"], 
             height=70,
             corner_radius=0
         )
-        header_frame.grid(row=0, column=0, sticky="ew", padx=0, pady=0)
+        header_frame.grid(row=0, column=0, columnspan=2, sticky="ew", padx=0, pady=0)
         header_frame.grid_columnconfigure(1, weight=1)
         
         # 로고/타이틀
@@ -498,9 +507,10 @@ class SionApp(ctk.CTk):
         # 음성 모드 토글 버튼
         self.voice_btn = ctk.CTkButton(
             header_frame,
-            text="음성",
+            text="🔊",
+            width=36,
             height=36,
-            font=("경기천년제목 Medium", 14),
+            font=("Segoe UI", 16),
             fg_color=COLORS["bg_card"],
             hover_color=COLORS["primary_dark"],
             corner_radius=18,
@@ -508,14 +518,15 @@ class SionApp(ctk.CTk):
             border_color=COLORS["primary"],
             command=self.toggle_voice_mode
         )
-        self.voice_btn.grid(row=0, column=1, padx=8, pady=15, sticky="e")
+        self.voice_btn.grid(row=0, column=1, padx=4, pady=15, sticky="e")
         
         # Google 로그인 버튼
         self.google_btn = ctk.CTkButton(
             header_frame,
-            text="Google",
+            text="🔗",
+            width=36,
             height=36,
-            font=("경기천년제목 Medium", 14),
+            font=("Segoe UI", 16),
             fg_color=COLORS["bg_card"],
             hover_color=COLORS["primary_dark"],
             corner_radius=18,
@@ -523,7 +534,7 @@ class SionApp(ctk.CTk):
             border_color="#666666",
             command=self.google_login
         )
-        self.google_btn.grid(row=0, column=2, padx=8, pady=15, sticky="e")
+        self.google_btn.grid(row=0, column=2, padx=4, pady=15, sticky="e")
         
         # 캘린더 바로가기 버튼 (로그인 후 표시)
         self.calendar_btn = ctk.CTkButton(
@@ -561,10 +572,26 @@ class SionApp(ctk.CTk):
         self.status_label = ctk.CTkLabel(
             header_frame,
             text="●",
-            font=("경기천년제목 Medium", 14),
+            font=("경기천년제목 Medium", 12),
             text_color="#FFA500"  # 주황색 (로딩 중)
         )
-        self.status_label.grid(row=0, column=3, padx=15, pady=18, sticky="e")
+        self.status_label.grid(row=0, column=3, padx=4, pady=18, sticky="e")
+        
+        # 사이드 패널 토글 버튼
+        self.panel_toggle_btn = ctk.CTkButton(
+            header_frame,
+            text="◀",
+            width=36,
+            height=36,
+            font=("Segoe UI", 14),
+            fg_color=COLORS["bg_card"],
+            hover_color=COLORS["primary_dark"],
+            corner_radius=18,
+            border_width=1,
+            border_color=COLORS["primary"],
+            command=self.toggle_side_panel
+        )
+        self.panel_toggle_btn.grid(row=0, column=6, padx=(4, 15), pady=15, sticky="e")
         
         # === 채팅 영역 ===
         chat_container = ctk.CTkFrame(
@@ -647,6 +674,296 @@ class SionApp(ctk.CTk):
             command=self.on_send
         )
         self.send_button.grid(row=0, column=2, padx=(0, 12), pady=10)
+        
+        # === 사이드 패널 (오른쪽) ===
+        self.side_panel = ctk.CTkFrame(
+            self,
+            width=self.side_panel_width,
+            fg_color=COLORS["bg_card"],
+            corner_radius=20,
+            border_width=1,
+            border_color="#2D2D44"
+        )
+        # 처음엔 숨김 상태
+        
+        # 사이드 패널 내용 구성
+        self._setup_side_panel()
+    
+    def _setup_side_panel(self):
+        """사이드 패널 내용 구성 - 2열 레이아웃"""
+        # 패널을 2열로 구성
+        self.side_panel.grid_columnconfigure(0, weight=1)  # 왼쪽 (시온+일정)
+        self.side_panel.grid_columnconfigure(1, weight=1)  # 오른쪽 (메일)
+        self.side_panel.grid_rowconfigure(0, weight=1)
+        
+        # === 왼쪽 열: 시온 이미지 + 일정 ===
+        left_frame = ctk.CTkFrame(self.side_panel, fg_color="transparent")
+        left_frame.grid(row=0, column=0, sticky="nsew", padx=(10, 5), pady=10)
+        left_frame.grid_rowconfigure(1, weight=1)
+        
+        # 시온 이미지
+        try:
+            from PIL import Image
+            icon_path = os.path.join(PROJECT_ROOT, "configs", "SION.png")
+            if os.path.exists(icon_path):
+                sion_image = Image.open(icon_path)
+                sion_image = sion_image.resize((100, 100), Image.Resampling.LANCZOS)
+                self.sion_ctk_image = ctk.CTkImage(light_image=sion_image, dark_image=sion_image, size=(100, 100))
+                
+                sion_label = ctk.CTkLabel(
+                    left_frame,
+                    image=self.sion_ctk_image,
+                    text=""
+                )
+                sion_label.pack(pady=(15, 10))
+        except Exception as e:
+            print(f"[SidePanel] 이미지 로드 실패: {e}")
+        
+        # 일정 타이틀
+        schedule_title = ctk.CTkLabel(
+            left_frame,
+            text="📅 오늘의 일정",
+            font=("경기천년제목 Bold", 16),
+            text_color=COLORS["primary_light"]
+        )
+        schedule_title.pack(pady=(10, 8))
+        
+        # 구분선
+        separator = ctk.CTkFrame(left_frame, height=2, fg_color=COLORS["primary_dark"])
+        separator.pack(fill="x", padx=10, pady=5)
+        
+        # 일정 표시 영역
+        self.schedule_frame = ctk.CTkScrollableFrame(
+            left_frame,
+            fg_color="transparent",
+            scrollbar_button_color=COLORS["primary_dark"],
+            scrollbar_button_hover_color=COLORS["primary"]
+        )
+        self.schedule_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        # 로딩 메시지
+        self.schedule_loading_label = ctk.CTkLabel(
+            self.schedule_frame,
+            text="로그인 후 일정 확인",
+            font=("경기천년제목 Medium", 11),
+            text_color=COLORS["text_secondary"],
+            wraplength=180
+        )
+        self.schedule_loading_label.pack(pady=15)
+        
+        # === 오른쪽 열: 메일 (전체 높이) ===
+        right_frame = ctk.CTkFrame(self.side_panel, fg_color="transparent")
+        right_frame.grid(row=0, column=1, sticky="nsew", padx=(5, 10), pady=10)
+        right_frame.grid_rowconfigure(1, weight=1)
+        
+        # 메일 타이틀
+        mail_title = ctk.CTkLabel(
+            right_frame,
+            text="📧 오늘의 메일",
+            font=("경기천년제목 Bold", 16),
+            text_color=COLORS["primary_light"]
+        )
+        mail_title.pack(pady=(15, 8))
+        
+        # 구분선
+        separator2 = ctk.CTkFrame(right_frame, height=2, fg_color=COLORS["primary_dark"])
+        separator2.pack(fill="x", padx=10, pady=5)
+        
+        # 메일 표시 영역 (전체 높이)
+        self.mail_frame = ctk.CTkScrollableFrame(
+            right_frame,
+            fg_color="transparent",
+            scrollbar_button_color=COLORS["primary_dark"],
+            scrollbar_button_hover_color=COLORS["primary"]
+        )
+        self.mail_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        # 로딩 메시지
+        self.mail_loading_label = ctk.CTkLabel(
+            self.mail_frame,
+            text="로그인 후 메일 확인",
+            font=("경기천년제목 Medium", 11),
+            text_color=COLORS["text_secondary"],
+            wraplength=180
+        )
+        self.mail_loading_label.pack(pady=15)
+        
+        # 새로고침 버튼 (하단 중앙)
+        refresh_btn = ctk.CTkButton(
+            right_frame,
+            text="🔄 새로고침",
+            height=32,
+            font=("경기천년제목 Medium", 12),
+            fg_color=COLORS["primary_dark"],
+            hover_color=COLORS["primary"],
+            corner_radius=16,
+            command=self.refresh_side_panel
+        )
+        refresh_btn.pack(pady=(5, 10))
+    
+    def _open_side_panel_default(self):
+        """앱 시작 시 사이드 패널 열기 (창 크기 변경 없이)"""
+        self.side_panel.grid(row=1, column=1, rowspan=2, sticky="nsew", padx=(0, 15), pady=(10, 12))
+        self.panel_toggle_btn.configure(text="▶")
+        self.side_panel_open = True
+    
+    def toggle_side_panel(self):
+        """사이드 패널 열기/닫기 - 창 크기 확장 방식"""
+        current_width = self.winfo_width()
+        current_height = self.winfo_height()
+        
+        if self.side_panel_open:
+            # 패널 닫기 - 창 크기 줄이기
+            self.side_panel.grid_forget()
+            self.panel_toggle_btn.configure(text="◀")
+            self.side_panel_open = False
+            
+            # 창 너비 줄이기
+            new_width = current_width - self.side_panel_width
+            self.geometry(f"{new_width}x{current_height}")
+        else:
+            # 패널 열기 - 창 크기 늘리기
+            new_width = current_width + self.side_panel_width
+            self.geometry(f"{new_width}x{current_height}")
+            
+            # 패널 표시
+            self.side_panel.grid(row=1, column=1, rowspan=2, sticky="nsew", padx=(0, 15), pady=(10, 12))
+            self.panel_toggle_btn.configure(text="▶")
+            self.side_panel_open = True
+            
+            # 데이터 로드
+            self.refresh_side_panel()
+    
+    def refresh_side_panel(self):
+        """사이드 패널 데이터 새로고침"""
+        if not GOOGLE_AVAILABLE:
+            return
+        
+        def load_data():
+            try:
+                auth_manager = get_auth_manager()
+                if not auth_manager.is_authenticated():
+                    return
+                
+                # 일정 데이터 로드
+                try:
+                    calendar = get_calendar_service()
+                    events = calendar.get_today_events()
+                    self.after(0, lambda: self._update_schedule_panel(events))
+                except Exception as e:
+                    print(f"[SidePanel] 일정 로드 오류: {e}")
+                
+                # 메일 데이터 로드
+                try:
+                    gmail = get_gmail_service()
+                    emails = gmail.get_unread_emails(10)
+                    self.after(0, lambda: self._update_mail_panel(emails))
+                except Exception as e:
+                    print(f"[SidePanel] 메일 로드 오류: {e}")
+                    
+            except Exception as e:
+                print(f"[SidePanel] 데이터 로드 오류: {e}")
+        
+        threading.Thread(target=load_data, daemon=True).start()
+    
+    def _update_schedule_panel(self, events: list):
+        """일정 패널 업데이트"""
+        # 기존 내용 삭제
+        for widget in self.schedule_frame.winfo_children():
+            widget.destroy()
+        
+        if not events:
+            no_event_label = ctk.CTkLabel(
+                self.schedule_frame,
+                text="📅 오늘 일정이 없습니다.",
+                font=("경기천년제목 Medium", 13),
+                text_color=COLORS["text_secondary"]
+            )
+            no_event_label.pack(pady=20)
+            return
+        
+        for event in events:
+            time_str = event.get('start', '')
+            if 'T' in time_str:
+                time_str = time_str.split('T')[1][:5]
+            else:
+                time_str = "종일"
+            
+            title = event.get('title', '제목 없음')
+            
+            event_frame = ctk.CTkFrame(
+                self.schedule_frame,
+                fg_color=COLORS["bg_dark"],
+                corner_radius=10
+            )
+            event_frame.pack(fill="x", pady=5)
+            
+            time_label = ctk.CTkLabel(
+                event_frame,
+                text=time_str,
+                font=("경기천년제목 Bold", 12),
+                text_color=COLORS["primary_light"],
+                width=50
+            )
+            time_label.pack(side="left", padx=(10, 5), pady=8)
+            
+            title_label = ctk.CTkLabel(
+                event_frame,
+                text=title,
+                font=("경기천년제목 Medium", 12),
+                text_color=COLORS["text_primary"],
+                anchor="w"
+            )
+            title_label.pack(side="left", padx=5, pady=8, fill="x", expand=True)
+    
+    def _update_mail_panel(self, emails: list):
+        """메일 패널 업데이트"""
+        # 기존 내용 삭제
+        for widget in self.mail_frame.winfo_children():
+            widget.destroy()
+        
+        if not emails:
+            no_mail_label = ctk.CTkLabel(
+                self.mail_frame,
+                text="📭 새 메일이 없습니다.",
+                font=("경기천년제목 Medium", 13),
+                text_color=COLORS["text_secondary"]
+            )
+            no_mail_label.pack(pady=20)
+            return
+        
+        for email in emails[:5]:  # 최대 5개만 표시
+            sender = email.get('from', '').split('<')[0].strip().strip('"').strip("'")
+            if not sender:
+                sender = email.get('from', '알 수 없음')
+            subject = email.get('subject', '제목 없음')
+            if len(subject) > 25:
+                subject = subject[:25] + "..."
+            
+            mail_frame = ctk.CTkFrame(
+                self.mail_frame,
+                fg_color=COLORS["bg_dark"],
+                corner_radius=10
+            )
+            mail_frame.pack(fill="x", pady=5)
+            
+            sender_label = ctk.CTkLabel(
+                mail_frame,
+                text=f"✉️ {sender}",
+                font=("경기천년제목 Medium", 11),
+                text_color=COLORS["primary_light"],
+                anchor="w"
+            )
+            sender_label.pack(anchor="w", padx=10, pady=(8, 2))
+            
+            subject_label = ctk.CTkLabel(
+                mail_frame,
+                text=subject,
+                font=("경기천년제목 Medium", 12),
+                text_color=COLORS["text_primary"],
+                anchor="w"
+            )
+            subject_label.pack(anchor="w", padx=10, pady=(2, 8))
     
     def _fade_in(self, alpha):
         """페이드인 애니메이션"""
@@ -1124,7 +1441,7 @@ class SionApp(ctk.CTk):
         
         if self.voice_mode:
             self.voice_btn.configure(
-                text="음성 ON",
+                text="🔔",
                 fg_color=COLORS["primary"],
                 hover_color=COLORS["primary_light"],
                 border_color=COLORS["primary_light"]
@@ -1132,7 +1449,7 @@ class SionApp(ctk.CTk):
             self.add_message("🔊 음성 모드가 활성화되었습니다.\n응답을 음성으로 읽어드립니다.", is_user=False)
         else:
             self.voice_btn.configure(
-                text="음성",
+                text="🔊",
                 fg_color=COLORS["bg_card"],
                 hover_color=COLORS["primary_dark"],
                 border_color=COLORS["primary"]
@@ -1249,7 +1566,7 @@ class SionApp(ctk.CTk):
         
         # 버튼 상태 업데이트
         self.google_btn.configure(
-            text="✓ 연결됨",
+            text="✅",
             fg_color=COLORS["primary"],
             border_color=COLORS["primary_light"]
         )
@@ -1284,7 +1601,7 @@ class SionApp(ctk.CTk):
                         is_user=False
                     ))
                     self.after(0, lambda: self.google_btn.configure(
-                        text="✓ 연결됨",
+                        text="✅",
                         fg_color=COLORS["primary"],
                         border_color=COLORS["primary_light"]
                     ))
@@ -1309,10 +1626,10 @@ class SionApp(ctk.CTk):
     
     def show_google_shortcuts(self):
         """Google 캘린더/메일 바로가기 버튼 표시"""
-        self.calendar_btn.grid(row=0, column=3, padx=4, pady=15, sticky="e")
-        self.mail_btn.grid(row=0, column=4, padx=4, pady=15, sticky="e")
+        self.calendar_btn.grid(row=0, column=4, padx=2, pady=15, sticky="e")
+        self.mail_btn.grid(row=0, column=5, padx=2, pady=15, sticky="e")
         # 상태 표시를 오른쪽으로 이동
-        self.status_label.grid(row=0, column=5, padx=15, pady=15, sticky="e")
+        self.status_label.grid(row=0, column=3, padx=4, pady=15, sticky="e")
     
     def open_google_calendar(self):
         """Google 캘린더 웹페이지 열기"""
@@ -1332,27 +1649,16 @@ class SionApp(ctk.CTk):
             return
         
         self.monitoring_active = True
-        print("[Monitor] 모니터링 시작")
-        
-        # 초기 메일 ID 수집 (알림 없이)
-        self._initialize_email_ids()
+        # 모니터링 시작 시간 기록 (이 시간 이후 메일만 알림)
+        self.monitoring_start_time = datetime.now()
+        print(f"[Monitor] 모니터링 시작 - 기준 시간: {self.monitoring_start_time.strftime('%Y-%m-%d %H:%M:%S')}")
         
         # 주기적 체크 시작
         self.after(self.email_check_interval, self._check_new_emails)
         self.after(self.schedule_check_interval, self._check_upcoming_events)
     
-    def _initialize_email_ids(self):
-        """현재 읽지 않은 메일 ID 수집 (초기화용)"""
-        try:
-            gmail = get_gmail_service()
-            emails = gmail.get_unread_emails(20)
-            self.last_checked_email_ids = {email.get('id', '') for email in emails if email.get('id')}
-            print(f"[Monitor] 초기 메일 ID {len(self.last_checked_email_ids)}개 수집")
-        except Exception as e:
-            print(f"[Monitor] 초기 메일 수집 오류: {e}")
-    
     def _check_new_emails(self):
-        """새 메일 확인 (주기적 실행)"""
+        """새 메일 확인 (주기적 실행) - 시간 기반 필터링"""
         if not self.monitoring_active:
             return
         
@@ -1361,17 +1667,36 @@ class SionApp(ctk.CTk):
                 gmail = get_gmail_service()
                 emails = gmail.get_unread_emails(10)
                 
-                current_ids = {email.get('id', '') for email in emails if email.get('id')}
-                new_ids = current_ids - self.last_checked_email_ids
-                
-                if new_ids:
-                    # 새 메일 발견
-                    new_emails = [e for e in emails if e.get('id') in new_ids]
-                    self.last_checked_email_ids = current_ids
+                for email in emails:
+                    email_id = email.get('id', '')
                     
-                    for email in new_emails:
-                        self.after(0, lambda e=email: self._notify_new_email(e))
-                        break  # 한 번에 하나씩 알림
+                    # 이미 알림한 메일은 스킵
+                    if email_id in self.notified_email_ids:
+                        continue
+                    
+                    # 메일 날짜 확인 - 모니터링 시작 이후 메일만
+                    email_date_str = email.get('date', '')
+                    if email_date_str and self.monitoring_start_time:
+                        try:
+                            # 메일 날짜 파싱 (예: "Sat, 14 Dec 2024 15:30:00 +0900")
+                            from email.utils import parsedate_to_datetime
+                            email_datetime = parsedate_to_datetime(email_date_str)
+                            # timezone aware -> naive 변환
+                            if email_datetime.tzinfo:
+                                email_datetime = email_datetime.replace(tzinfo=None)
+                            
+                            # 모니터링 시작 시간 이전 메일은 스킵
+                            if email_datetime < self.monitoring_start_time:
+                                continue
+                            
+                            # 새 메일 발견!
+                            self.notified_email_ids.add(email_id)
+                            self.after(0, lambda e=email: self._notify_new_email(e))
+                            break  # 한 번에 하나씩 알림
+                            
+                        except Exception as parse_error:
+                            print(f"[Monitor] 메일 날짜 파싱 오류: {parse_error}")
+                            continue
                 
             except Exception as e:
                 print(f"[Monitor] 메일 체크 오류: {e}")
@@ -1385,6 +1710,10 @@ class SionApp(ctk.CTk):
         """새 메일 알림"""
         if self.waiting_for_response:
             return  # 이미 응답 대기 중이면 스킵
+        
+        # 사이드 패널 업데이트
+        if self.side_panel_open:
+            self.refresh_side_panel()
         
         sender = email.get('from', '알 수 없음').split('<')[0].strip().strip('"').strip("'")
         subject = email.get('subject', '제목 없음')
