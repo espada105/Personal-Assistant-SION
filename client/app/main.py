@@ -22,6 +22,18 @@ try:
 except ImportError:
     AUDIO_AVAILABLE = False
 
+# TTS 관련 임포트 (무료 edge-tts 사용)
+try:
+    import edge_tts
+    import asyncio
+    import pygame
+    pygame.mixer.init()
+    TTS_AVAILABLE = True
+except ImportError:
+    TTS_AVAILABLE = False
+
+import tempfile
+
 # 프로젝트 루트 경로 (먼저 정의)
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -176,6 +188,10 @@ class SionApp(ctk.CTk):
         self.service_manager = ServiceManager()
         self.services_ready = False
         
+        # 음성 모드 (TTS 활성화 여부)
+        self.voice_mode = False
+        self.is_speaking = False
+        
         # UI 구성
         self.setup_ui()
         
@@ -205,6 +221,20 @@ class SionApp(ctk.CTk):
         )
         title_label.grid(row=0, column=0, padx=20, pady=15)
         
+        # 음성 모드 토글 버튼
+        self.voice_btn = ctk.CTkButton(
+            header_frame,
+            text="🔇 음성 OFF",
+            width=100,
+            height=30,
+            font=("맑은 고딕", 11),
+            fg_color="#555555",
+            hover_color="#666666",
+            corner_radius=15,
+            command=self.toggle_voice_mode
+        )
+        self.voice_btn.grid(row=0, column=1, padx=5, pady=15, sticky="e")
+        
         # Google 로그인 버튼
         self.google_btn = ctk.CTkButton(
             header_frame,
@@ -217,7 +247,7 @@ class SionApp(ctk.CTk):
             corner_radius=15,
             command=self.google_login
         )
-        self.google_btn.grid(row=0, column=1, padx=10, pady=15, sticky="e")
+        self.google_btn.grid(row=0, column=2, padx=5, pady=15, sticky="e")
         
         # 상태 표시
         self.status_label = ctk.CTkLabel(
@@ -226,7 +256,7 @@ class SionApp(ctk.CTk):
             font=("맑은 고딕", 11),
             text_color="#888888"
         )
-        self.status_label.grid(row=0, column=2, padx=20, pady=15, sticky="e")
+        self.status_label.grid(row=0, column=3, padx=10, pady=15, sticky="e")
         
         # === 채팅 영역 ===
         chat_container = ctk.CTkFrame(self, fg_color="#2B2B2B")
@@ -343,6 +373,9 @@ class SionApp(ctk.CTk):
                 agent = get_agent()
                 reply = agent.process(message)
                 self.after(0, lambda r=reply: self.add_message(r, is_user=False))
+                # 음성 모드일 때 응답을 읽어줌
+                if self.voice_mode:
+                    self.after(100, lambda r=reply: self.speak_text(r))
                 return
             
             # 폴백: 기존 NLU 방식
@@ -726,6 +759,81 @@ class SionApp(ctk.CTk):
             
         except Exception as e:
             self.after(0, lambda: self.add_message(f"❌ 음성 인식 오류: {str(e)}", is_user=False))
+    
+    def toggle_voice_mode(self):
+        """음성 모드 토글"""
+        if not TTS_AVAILABLE:
+            self.add_message("❌ TTS 기능을 사용할 수 없습니다.\n\npip install edge-tts pygame", is_user=False)
+            return
+        
+        self.voice_mode = not self.voice_mode
+        
+        if self.voice_mode:
+            self.voice_btn.configure(
+                text="🔊 음성 ON",
+                fg_color="#4CAF50",
+                hover_color="#45a049"
+            )
+            self.add_message("🔊 음성 모드가 활성화되었습니다.\n응답을 음성으로 읽어드립니다.", is_user=False)
+        else:
+            self.voice_btn.configure(
+                text="🔇 음성 OFF",
+                fg_color="#555555",
+                hover_color="#666666"
+            )
+            self.add_message("🔇 음성 모드가 비활성화되었습니다.", is_user=False)
+    
+    def speak_text(self, text: str):
+        """텍스트를 음성으로 읽기 (edge-tts 사용)"""
+        if not TTS_AVAILABLE or not self.voice_mode or self.is_speaking:
+            return
+        
+        def do_speak():
+            self.is_speaking = True
+            try:
+                # 이모지 및 특수문자 제거 (TTS가 읽기 어려운 것들)
+                import re
+                clean_text = re.sub(r'[📅📆🕐✅❌🔗💬📧🎤🔴🔊🔇•]', '', text)
+                clean_text = re.sub(r'\n+', '. ', clean_text)
+                clean_text = clean_text.strip()
+                
+                if not clean_text:
+                    return
+                
+                # edge-tts로 음성 생성 (한국어 여성 음성)
+                async def generate_speech():
+                    communicate = edge_tts.Communicate(clean_text, "ko-KR-SunHiNeural")
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_file:
+                        tmp_path = tmp_file.name
+                    await communicate.save(tmp_path)
+                    return tmp_path
+                
+                # 비동기 실행
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                audio_path = loop.run_until_complete(generate_speech())
+                loop.close()
+                
+                # pygame으로 재생
+                pygame.mixer.music.load(audio_path)
+                pygame.mixer.music.play()
+                
+                # 재생 완료 대기
+                while pygame.mixer.music.get_busy():
+                    time.sleep(0.1)
+                
+                # 임시 파일 삭제
+                try:
+                    os.remove(audio_path)
+                except:
+                    pass
+                    
+            except Exception as e:
+                print(f"[TTS] 음성 출력 오류: {e}")
+            finally:
+                self.is_speaking = False
+        
+        threading.Thread(target=do_speak, daemon=True).start()
     
     def google_login(self):
         """Google 로그인"""
