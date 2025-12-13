@@ -140,40 +140,67 @@ class ServiceManager:
                 pass
 
 
+# 색상 테마 (보라색 기반)
+COLORS = {
+    "bg_dark": "#0D0D0D",           # 가장 어두운 배경
+    "bg_main": "#1A1A2E",           # 메인 배경
+    "bg_card": "#16213E",           # 카드/컨테이너 배경
+    "bg_input": "#1F1F3D",          # 입력창 배경
+    "primary": "#9D4EDD",           # 메인 보라색
+    "primary_dark": "#7B2CBF",      # 어두운 보라색
+    "primary_light": "#C77DFF",     # 밝은 보라색
+    "accent": "#E040FB",            # 악센트 핑크
+    "user_bubble": "#9D4EDD",       # 사용자 메시지 (보라색)
+    "ai_bubble": "#2D2D44",         # AI 메시지 (어두운 보라 회색)
+    "text_primary": "#FFFFFF",      # 기본 텍스트
+    "text_secondary": "#B0B0B0",    # 보조 텍스트
+    "success": "#4CAF50",           # 성공 (녹색)
+    "error": "#FF5252",             # 에러 (빨간색)
+}
+
+
 class ChatMessage(ctk.CTkFrame):
-    """채팅 메시지 위젯"""
+    """채팅 메시지 위젯 (모던 디자인)"""
     
     def __init__(self, parent, message: str, is_user: bool = True, **kwargs):
         super().__init__(parent, **kwargs)
         
         self.configure(fg_color="transparent")
         
-        # 메시지 정렬
+        # 메시지 정렬 및 색상
         if is_user:
             anchor = "e"
-            bg_color = "#2B5278"  # 사용자: 파란색
-            text_color = "white"
-            padx = (50, 10)
+            bg_color = COLORS["user_bubble"]
+            text_color = COLORS["text_primary"]
+            padx = (80, 15)
+            corner = 20
         else:
             anchor = "w"
-            bg_color = "#3D3D3D"  # AI: 회색
-            text_color = "white"
-            padx = (10, 50)
+            bg_color = COLORS["ai_bubble"]
+            text_color = COLORS["text_primary"]
+            padx = (15, 80)
+            corner = 20
         
-        # 메시지 컨테이너
-        msg_frame = ctk.CTkFrame(self, fg_color=bg_color, corner_radius=15)
-        msg_frame.pack(anchor=anchor, padx=padx, pady=5)
+        # 메시지 컨테이너 (그라데이션 효과)
+        msg_frame = ctk.CTkFrame(
+            self, 
+            fg_color=bg_color, 
+            corner_radius=corner,
+            border_width=1 if not is_user else 0,
+            border_color="#3D3D5C" if not is_user else None
+        )
+        msg_frame.pack(anchor=anchor, padx=padx, pady=8)
         
         # 메시지 텍스트
         msg_label = ctk.CTkLabel(
             msg_frame, 
             text=message,
             text_color=text_color,
-            wraplength=400,
+            wraplength=350,
             justify="left",
-            font=("맑은 고딕", 13)
+            font=("Segoe UI", 13)
         )
-        msg_label.pack(padx=15, pady=10)
+        msg_label.pack(padx=18, pady=12)
 
 
 class SionApp(ctk.CTk):
@@ -200,6 +227,9 @@ class SionApp(ctk.CTk):
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
         
+        # 배경색 설정
+        self.configure(fg_color=COLORS["bg_dark"])
+        
         # 서비스 매니저
         self.service_manager = ServiceManager()
         self.services_ready = False
@@ -225,96 +255,135 @@ class SionApp(ctk.CTk):
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
     
     def setup_ui(self):
-        """UI 구성"""
+        """UI 구성 (모던 보라색 테마)"""
         # 메인 컨테이너
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
         
         # === 헤더 ===
-        header_frame = ctk.CTkFrame(self, fg_color="#1E1E1E", height=60)
+        header_frame = ctk.CTkFrame(
+            self, 
+            fg_color=COLORS["bg_main"], 
+            height=70,
+            corner_radius=0
+        )
         header_frame.grid(row=0, column=0, sticky="ew", padx=0, pady=0)
         header_frame.grid_columnconfigure(1, weight=1)
         
         # 로고/타이틀
         title_label = ctk.CTkLabel(
             header_frame, 
-            text="SION", 
-            font=("맑은 고딕", 20, "bold"),
-            text_color="#4A9FFF"
+            text="✦ SION", 
+            font=("Segoe UI", 24, "bold"),
+            text_color=COLORS["primary_light"]
         )
-        title_label.grid(row=0, column=0, padx=20, pady=15)
+        title_label.grid(row=0, column=0, padx=25, pady=18)
         
         # 음성 모드 토글 버튼
         self.voice_btn = ctk.CTkButton(
             header_frame,
-            text="🔇 음성 OFF",
-            width=100,
-            height=30,
-            font=("맑은 고딕", 11),
-            fg_color="#555555",
-            hover_color="#666666",
-            corner_radius=15,
+            text="🔇 음성",
+            width=90,
+            height=32,
+            font=("Segoe UI", 11),
+            fg_color=COLORS["bg_card"],
+            hover_color=COLORS["primary_dark"],
+            corner_radius=16,
+            border_width=1,
+            border_color=COLORS["primary"],
             command=self.toggle_voice_mode
         )
-        self.voice_btn.grid(row=0, column=1, padx=5, pady=15, sticky="e")
+        self.voice_btn.grid(row=0, column=1, padx=5, pady=18, sticky="e")
         
         # Google 로그인 버튼
         self.google_btn = ctk.CTkButton(
             header_frame,
-            text="🔗 Google 로그인",
-            width=120,
-            height=30,
-            font=("맑은 고딕", 11),
-            fg_color="#DB4437",
-            hover_color="#C53929",
-            corner_radius=15,
+            text="Google",
+            width=90,
+            height=32,
+            font=("Segoe UI", 11),
+            fg_color=COLORS["bg_card"],
+            hover_color=COLORS["primary_dark"],
+            corner_radius=16,
+            border_width=1,
+            border_color="#666666",
             command=self.google_login
         )
-        self.google_btn.grid(row=0, column=2, padx=5, pady=15, sticky="e")
+        self.google_btn.grid(row=0, column=2, padx=5, pady=18, sticky="e")
         
-        # 상태 표시
+        # 상태 표시 (작은 점으로)
         self.status_label = ctk.CTkLabel(
             header_frame,
-            text="⏳ 서비스 시작 중...",
-            font=("맑은 고딕", 11),
-            text_color="#888888"
+            text="●",
+            font=("Segoe UI", 14),
+            text_color="#FFA500"  # 주황색 (로딩 중)
         )
-        self.status_label.grid(row=0, column=3, padx=10, pady=15, sticky="e")
+        self.status_label.grid(row=0, column=3, padx=15, pady=18, sticky="e")
         
         # === 채팅 영역 ===
-        chat_container = ctk.CTkFrame(self, fg_color="#2B2B2B")
-        chat_container.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
+        chat_container = ctk.CTkFrame(
+            self, 
+            fg_color=COLORS["bg_main"],
+            corner_radius=20,
+            border_width=1,
+            border_color="#2D2D44"
+        )
+        chat_container.grid(row=1, column=0, sticky="nsew", padx=15, pady=10)
         chat_container.grid_columnconfigure(0, weight=1)
         chat_container.grid_rowconfigure(0, weight=1)
+        
+        # 채팅 타이틀
+        chat_title = ctk.CTkLabel(
+            chat_container,
+            text="Chat",
+            font=("Segoe UI", 16),
+            text_color=COLORS["text_secondary"]
+        )
+        chat_title.grid(row=0, column=0, pady=(15, 5))
         
         # 스크롤 가능한 채팅 영역
         self.chat_frame = ctk.CTkScrollableFrame(
             chat_container,
-            fg_color="transparent"
+            fg_color="transparent",
+            scrollbar_button_color=COLORS["primary_dark"],
+            scrollbar_button_hover_color=COLORS["primary"]
         )
-        self.chat_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        self.chat_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(5, 10))
         self.chat_frame.grid_columnconfigure(0, weight=1)
+        chat_container.grid_rowconfigure(1, weight=1)
         
         # 환영 메시지
         welcome_msg = "안녕하세요! SION입니다. 무엇을 도와드릴까요?"
         if HOTKEY_AVAILABLE:
-            welcome_msg += f"\n\n💡 Tip: {self.hotkey_combo.upper()} 키로 어디서든 호출할 수 있어요!"
+            welcome_msg += f"\n\n💡 Tip: {self.hotkey_combo.upper()} 키로 어디서든 호출 가능!"
         self.add_message(welcome_msg, is_user=False)
         
         # === 입력 영역 ===
-        input_frame = ctk.CTkFrame(self, fg_color="#1E1E1E", height=70)
-        input_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 10))
+        input_frame = ctk.CTkFrame(
+            self, 
+            fg_color=COLORS["bg_main"], 
+            height=80,
+            corner_radius=20,
+            border_width=1,
+            border_color="#2D2D44"
+        )
+        input_frame.grid(row=2, column=0, sticky="ew", padx=15, pady=(0, 15))
         input_frame.grid_columnconfigure(0, weight=1)
         
         # 텍스트 입력
         self.input_entry = ctk.CTkEntry(
             input_frame,
-            placeholder_text="메시지를 입력하세요...",
-            height=45,
-            font=("맑은 고딕", 13),
-            corner_radius=20
+            placeholder_text="+ Add a message...",
+            height=50,
+            font=("Segoe UI", 13),
+            corner_radius=25,
+            fg_color=COLORS["bg_card"],
+            border_color=COLORS["primary_dark"],
+            border_width=1,
+            text_color=COLORS["text_primary"],
+            placeholder_text_color=COLORS["text_secondary"]
         )
-        self.input_entry.grid(row=0, column=0, padx=(15, 10), pady=12, sticky="ew")
+        self.input_entry.grid(row=0, column=0, padx=(15, 10), pady=15, sticky="ew")
         self.input_entry.bind("<Return>", self.on_send)
         
         # 마이크 버튼 (음성 입력)
@@ -322,15 +391,15 @@ class SionApp(ctk.CTk):
         self.mic_button = ctk.CTkButton(
             input_frame,
             text="🎤",
-            width=45,
-            height=45,
-            font=("맑은 고딕", 16),
-            corner_radius=22,
-            fg_color="#4CAF50" if AUDIO_AVAILABLE else "#888888",
-            hover_color="#45a049" if AUDIO_AVAILABLE else "#888888",
+            width=50,
+            height=50,
+            font=("Segoe UI", 18),
+            corner_radius=25,
+            fg_color=COLORS["primary"] if AUDIO_AVAILABLE else "#555555",
+            hover_color=COLORS["primary_light"] if AUDIO_AVAILABLE else "#555555",
             command=self.toggle_recording
         )
-        self.mic_button.grid(row=0, column=1, padx=(0, 5), pady=12)
+        self.mic_button.grid(row=0, column=1, padx=(0, 8), pady=15)
         
         if not AUDIO_AVAILABLE:
             self.mic_button.configure(state="disabled")
@@ -338,11 +407,13 @@ class SionApp(ctk.CTk):
         # 전송 버튼
         self.send_button = ctk.CTkButton(
             input_frame,
-            text="전송",
-            width=70,
-            height=45,
-            font=("맑은 고딕", 13, "bold"),
-            corner_radius=20,
+            text="➤",
+            width=50,
+            height=50,
+            font=("Segoe UI", 18),
+            corner_radius=25,
+            fg_color=COLORS["primary"],
+            hover_color=COLORS["primary_light"],
             command=self.on_send
         )
         self.send_button.grid(row=0, column=2, padx=(0, 15), pady=12)
@@ -364,13 +435,13 @@ class SionApp(ctk.CTk):
             if nlu_ok:
                 self.services_ready = True
                 self.after(0, lambda: self.status_label.configure(
-                    text="✅ 서비스 준비 완료",
-                    text_color="#4CAF50"
+                    text="●",
+                    text_color=COLORS["success"]
                 ))
             else:
                 self.after(0, lambda: self.status_label.configure(
-                    text="❌ 서비스 시작 실패",
-                    text_color="#F44336"
+                    text="●",
+                    text_color=COLORS["error"]
                 ))
         
         thread = threading.Thread(target=start, daemon=True)
@@ -636,9 +707,9 @@ class SionApp(ctk.CTk):
         # 녹음 시작
         self.is_recording = True
         self.mic_button.configure(
-            text="🔴",
-            fg_color="#F44336",
-            hover_color="#D32F2F"
+            text="●",
+            fg_color=COLORS["accent"],
+            hover_color=COLORS["error"]
         )
         self.add_message("🎤 녹음 중... (최대 10초, 말씀이 끝나면 자동 종료)", is_user=False)
         
@@ -692,8 +763,8 @@ class SionApp(ctk.CTk):
             self.is_recording = False
             self.after(0, lambda: self.mic_button.configure(
                 text="🎤",
-                fg_color="#4CAF50",
-                hover_color="#45a049"
+                fg_color=COLORS["primary"],
+                hover_color=COLORS["primary_light"]
             ))
             
             if not frames:
@@ -719,8 +790,8 @@ class SionApp(ctk.CTk):
             self.is_recording = False
             self.after(0, lambda: self.mic_button.configure(
                 text="🎤",
-                fg_color="#4CAF50",
-                hover_color="#45a049"
+                fg_color=COLORS["primary"],
+                hover_color=COLORS["primary_light"]
             ))
             self.after(0, lambda: self.add_message(f"❌ 녹음 오류: {str(e)}", is_user=False))
     
@@ -796,16 +867,18 @@ class SionApp(ctk.CTk):
         
         if self.voice_mode:
             self.voice_btn.configure(
-                text="🔊 음성 ON",
-                fg_color="#4CAF50",
-                hover_color="#45a049"
+                text="🔊 음성",
+                fg_color=COLORS["primary"],
+                hover_color=COLORS["primary_light"],
+                border_color=COLORS["primary_light"]
             )
             self.add_message("🔊 음성 모드가 활성화되었습니다.\n응답을 음성으로 읽어드립니다.", is_user=False)
         else:
             self.voice_btn.configure(
-                text="🔇 음성 OFF",
-                fg_color="#555555",
-                hover_color="#666666"
+                text="🔇 음성",
+                fg_color=COLORS["bg_card"],
+                hover_color=COLORS["primary_dark"],
+                border_color=COLORS["primary"]
             )
             self.add_message("🔇 음성 모드가 비활성화되었습니다.", is_user=False)
     
@@ -882,8 +955,9 @@ class SionApp(ctk.CTk):
                         is_user=False
                     ))
                     self.after(0, lambda: self.google_btn.configure(
-                        text="✅ 로그인됨",
-                        fg_color="#4CAF50"
+                        text="✓ 연결됨",
+                        fg_color=COLORS["primary"],
+                        border_color=COLORS["primary_light"]
                     ))
                 else:
                     self.after(0, lambda: self.add_message(
