@@ -44,6 +44,52 @@ import tempfile
 # 프로젝트 루트 경로 (먼저 정의)
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# 커스텀 폰트 로드 (경기천년체)
+FONT_LOADED = False
+FONT_NAME = "경기천년제목"  # 폰트 이름
+FONT_NAME_EN = "GyeonggiCheonnyeon Title"
+
+def load_custom_fonts():
+    """Windows에서 커스텀 폰트 로드"""
+    global FONT_LOADED
+    if sys.platform != "win32":
+        return
+    
+    try:
+        import ctypes
+        from ctypes import wintypes
+        
+        # Windows API 함수
+        gdi32 = ctypes.WinDLL('gdi32')
+        AddFontResourceEx = gdi32.AddFontResourceExW
+        AddFontResourceEx.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.LPVOID]
+        AddFontResourceEx.restype = ctypes.c_int
+        
+        FR_PRIVATE = 0x10  # 현재 프로세스에서만 사용
+        
+        # 폰트 파일 경로
+        font_dir = os.path.join(PROJECT_ROOT, "configs", "경기천년체_220929", "TTF")
+        
+        fonts_to_load = [
+            "경기천년제목_Medium.ttf",
+            "경기천년제목_Bold.ttf",
+            "경기천년제목_Light.ttf",
+        ]
+        
+        for font_file in fonts_to_load:
+            font_path = os.path.join(font_dir, font_file)
+            if os.path.exists(font_path):
+                result = AddFontResourceEx(font_path, FR_PRIVATE, None)
+                if result > 0:
+                    print(f"[Font] 로드 성공: {font_file}")
+                    FONT_LOADED = True
+        
+    except Exception as e:
+        print(f"[Font] 폰트 로드 실패: {e}")
+
+# 폰트 로드 실행
+load_custom_fonts()
+
 # Google Services 임포트
 try:
     # 패키지로 실행될 때
@@ -198,9 +244,99 @@ class ChatMessage(ctk.CTkFrame):
             text_color=text_color,
             wraplength=350,
             justify="left",
-            font=("Segoe UI", 13)
+            font=("경기천년제목 Medium", 13)
         )
         msg_label.pack(padx=18, pady=12)
+
+
+class SplashScreen(ctk.CTkToplevel):
+    """영화 인트로 스타일 스플래시 스크린"""
+    
+    def __init__(self, parent):
+        super().__init__(parent)
+        
+        # 창 설정 (테두리 없이, 중앙에)
+        self.overrideredirect(True)  # 타이틀바 제거
+        self.configure(fg_color=COLORS["bg_dark"])
+        
+        # 크기 및 위치
+        splash_width, splash_height = 500, 400
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+        x = (screen_width - splash_width) // 2
+        y = (screen_height - splash_height) // 2
+        self.geometry(f"{splash_width}x{splash_height}+{x}+{y}")
+        
+        # 항상 위에
+        self.attributes('-topmost', True)
+        self.attributes('-alpha', 0.0)
+        
+        # 레이아웃
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=0)
+        self.grid_rowconfigure(2, weight=0)
+        
+        # SION 캐릭터 이미지
+        try:
+            from PIL import Image, ImageTk
+            image_path = os.path.join(PROJECT_ROOT, "configs", "SION.png")
+            if os.path.exists(image_path):
+                pil_image = Image.open(image_path)
+                # 이미지 크기 조정
+                pil_image = pil_image.resize((200, 200), Image.Resampling.LANCZOS)
+                self.splash_image = ctk.CTkImage(light_image=pil_image, dark_image=pil_image, size=(200, 200))
+                
+                image_label = ctk.CTkLabel(
+                    self,
+                    text="",
+                    image=self.splash_image
+                )
+                image_label.grid(row=0, column=0, pady=(50, 20))
+        except Exception as e:
+            print(f"[Splash] 이미지 로드 실패: {e}")
+        
+        # 로고 텍스트
+        logo_label = ctk.CTkLabel(
+            self,
+            text="✦ SION",
+            font=("경기천년제목 Bold", 48),
+            text_color=COLORS["primary_light"]
+        )
+        logo_label.grid(row=1, column=0, pady=(0, 10))
+        
+        # 서브 텍스트
+        sub_label = ctk.CTkLabel(
+            self,
+            text="Personal Assistant",
+            font=("경기천년제목 Light", 18),
+            text_color=COLORS["text_secondary"]
+        )
+        sub_label.grid(row=2, column=0, pady=(0, 50))
+        
+        # 페이드인 시작
+        self.after(100, lambda: self._fade_in(0.0))
+    
+    def _fade_in(self, alpha):
+        """페이드인"""
+        if alpha < 1.0:
+            alpha += 0.08
+            self.attributes('-alpha', min(alpha, 1.0))
+            self.after(30, lambda: self._fade_in(alpha))
+    
+    def fade_out_and_close(self, callback):
+        """페이드아웃 후 닫기"""
+        self._fade_out(1.0, callback)
+    
+    def _fade_out(self, alpha, callback):
+        """페이드아웃"""
+        if alpha > 0:
+            alpha -= 0.08
+            self.attributes('-alpha', max(alpha, 0.0))
+            self.after(30, lambda: self._fade_out(alpha, callback))
+        else:
+            self.destroy()
+            callback()
 
 
 class SionApp(ctk.CTk):
@@ -209,10 +345,16 @@ class SionApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         
-        # 윈도우 설정
+        # 윈도우 설정 (6:4 비율 = 900x600)
         self.title("SION Personal Assistant")
-        self.geometry("500x700")
-        self.minsize(400, 500)
+        self.geometry("900x600")
+        self.minsize(600, 400)
+        
+        # 화면 중앙에 배치
+        self.center_window(900, 600)
+        
+        # 시작 시 숨김 (스플래시 후 표시)
+        self.withdraw()
         
         # 앱 아이콘 설정 (작업 표시줄 포함)
         icon_path = os.path.join(PROJECT_ROOT, "configs", "SION.ico")
@@ -245,6 +387,9 @@ class SionApp(ctk.CTk):
         # UI 구성
         self.setup_ui()
         
+        # 스플래시 스크린 표시
+        self.show_splash()
+        
         # 서비스 시작 (백그라운드)
         self.start_services_async()
         
@@ -253,6 +398,30 @@ class SionApp(ctk.CTk):
         
         # 종료 시 서비스 정리
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
+    
+    def show_splash(self):
+        """스플래시 스크린 표시"""
+        self.splash = SplashScreen(self)
+        # 4초 후 스플래시 페이드아웃 → 메인 앱 표시
+        self.after(4000, self.end_splash)
+    
+    def end_splash(self):
+        """스플래시 종료 후 메인 앱 표시"""
+        self.splash.fade_out_and_close(self.show_main_window)
+    
+    def show_main_window(self):
+        """메인 윈도우 표시 (페이드인)"""
+        self.attributes('-alpha', 0.0)
+        self.deiconify()  # 창 표시
+        self._fade_in(0.0)
+    
+    def center_window(self, width, height):
+        """창을 화면 중앙에 배치"""
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+        x = (screen_width - width) // 2
+        y = (screen_height - height) // 2
+        self.geometry(f"{width}x{height}+{x}+{y}")
     
     def setup_ui(self):
         """UI 구성 (모던 보라색 테마)"""
@@ -274,7 +443,7 @@ class SionApp(ctk.CTk):
         title_label = ctk.CTkLabel(
             header_frame, 
             text="✦ SION", 
-            font=("Segoe UI", 24, "bold"),
+            font=("경기천년제목 Bold", 24),
             text_color=COLORS["primary_light"]
         )
         title_label.grid(row=0, column=0, padx=25, pady=18)
@@ -282,40 +451,38 @@ class SionApp(ctk.CTk):
         # 음성 모드 토글 버튼
         self.voice_btn = ctk.CTkButton(
             header_frame,
-            text="🔇 음성",
-            width=90,
-            height=32,
-            font=("Segoe UI", 11),
+            text="음성",
+            height=36,
+            font=("경기천년제목 Medium", 14),
             fg_color=COLORS["bg_card"],
             hover_color=COLORS["primary_dark"],
-            corner_radius=16,
+            corner_radius=18,
             border_width=1,
             border_color=COLORS["primary"],
             command=self.toggle_voice_mode
         )
-        self.voice_btn.grid(row=0, column=1, padx=5, pady=18, sticky="e")
+        self.voice_btn.grid(row=0, column=1, padx=8, pady=15, sticky="e")
         
         # Google 로그인 버튼
         self.google_btn = ctk.CTkButton(
             header_frame,
             text="Google",
-            width=90,
-            height=32,
-            font=("Segoe UI", 11),
+            height=36,
+            font=("경기천년제목 Medium", 14),
             fg_color=COLORS["bg_card"],
             hover_color=COLORS["primary_dark"],
-            corner_radius=16,
+            corner_radius=18,
             border_width=1,
             border_color="#666666",
             command=self.google_login
         )
-        self.google_btn.grid(row=0, column=2, padx=5, pady=18, sticky="e")
+        self.google_btn.grid(row=0, column=2, padx=8, pady=15, sticky="e")
         
         # 상태 표시 (작은 점으로)
         self.status_label = ctk.CTkLabel(
             header_frame,
             text="●",
-            font=("Segoe UI", 14),
+            font=("경기천년제목 Medium", 14),
             text_color="#FFA500"  # 주황색 (로딩 중)
         )
         self.status_label.grid(row=0, column=3, padx=15, pady=18, sticky="e")
@@ -336,7 +503,7 @@ class SionApp(ctk.CTk):
         chat_title = ctk.CTkLabel(
             chat_container,
             text="Chat",
-            font=("Segoe UI", 16),
+            font=("경기천년제목 Medium", 16),
             text_color=COLORS["text_secondary"]
         )
         chat_title.grid(row=0, column=0, pady=(15, 5))
@@ -362,28 +529,28 @@ class SionApp(ctk.CTk):
         input_frame = ctk.CTkFrame(
             self, 
             fg_color=COLORS["bg_main"], 
-            height=80,
-            corner_radius=20,
+            height=60,
+            corner_radius=15,
             border_width=1,
             border_color="#2D2D44"
         )
-        input_frame.grid(row=2, column=0, sticky="ew", padx=15, pady=(0, 15))
+        input_frame.grid(row=2, column=0, sticky="ew", padx=15, pady=(0, 12))
         input_frame.grid_columnconfigure(0, weight=1)
         
         # 텍스트 입력
         self.input_entry = ctk.CTkEntry(
             input_frame,
-            placeholder_text="+ Add a message...",
-            height=50,
-            font=("Segoe UI", 13),
-            corner_radius=25,
+            placeholder_text="메시지를 입력하세요...",
+            height=40,
+            font=("경기천년제목 Medium", 13),
+            corner_radius=20,
             fg_color=COLORS["bg_card"],
             border_color=COLORS["primary_dark"],
             border_width=1,
             text_color=COLORS["text_primary"],
             placeholder_text_color=COLORS["text_secondary"]
         )
-        self.input_entry.grid(row=0, column=0, padx=(15, 10), pady=15, sticky="ew")
+        self.input_entry.grid(row=0, column=0, padx=(12, 8), pady=10, sticky="ew")
         self.input_entry.bind("<Return>", self.on_send)
         
         # 마이크 버튼 (음성 입력)
@@ -391,15 +558,15 @@ class SionApp(ctk.CTk):
         self.mic_button = ctk.CTkButton(
             input_frame,
             text="🎤",
-            width=50,
-            height=50,
-            font=("Segoe UI", 18),
-            corner_radius=25,
+            width=40,
+            height=40,
+            font=("Segoe UI", 16),
+            corner_radius=20,
             fg_color=COLORS["primary"] if AUDIO_AVAILABLE else "#555555",
             hover_color=COLORS["primary_light"] if AUDIO_AVAILABLE else "#555555",
             command=self.toggle_recording
         )
-        self.mic_button.grid(row=0, column=1, padx=(0, 8), pady=15)
+        self.mic_button.grid(row=0, column=1, padx=(0, 5), pady=10)
         
         if not AUDIO_AVAILABLE:
             self.mic_button.configure(state="disabled")
@@ -408,15 +575,24 @@ class SionApp(ctk.CTk):
         self.send_button = ctk.CTkButton(
             input_frame,
             text="➤",
-            width=50,
-            height=50,
-            font=("Segoe UI", 18),
-            corner_radius=25,
+            width=40,
+            height=40,
+            font=("Segoe UI", 16),
+            corner_radius=20,
             fg_color=COLORS["primary"],
             hover_color=COLORS["primary_light"],
             command=self.on_send
         )
-        self.send_button.grid(row=0, column=2, padx=(0, 15), pady=12)
+        self.send_button.grid(row=0, column=2, padx=(0, 12), pady=10)
+    
+    def _fade_in(self, alpha):
+        """페이드인 애니메이션"""
+        if alpha < 1.0:
+            alpha += 0.05  # 0.05씩 증가
+            self.attributes('-alpha', alpha)
+            self.after(20, lambda: self._fade_in(alpha))  # 20ms 간격
+        else:
+            self.attributes('-alpha', 1.0)
     
     def add_message(self, message: str, is_user: bool = True):
         """채팅에 메시지 추가"""
@@ -867,7 +1043,7 @@ class SionApp(ctk.CTk):
         
         if self.voice_mode:
             self.voice_btn.configure(
-                text="🔊 음성",
+                text="음성 ON",
                 fg_color=COLORS["primary"],
                 hover_color=COLORS["primary_light"],
                 border_color=COLORS["primary_light"]
@@ -875,7 +1051,7 @@ class SionApp(ctk.CTk):
             self.add_message("🔊 음성 모드가 활성화되었습니다.\n응답을 음성으로 읽어드립니다.", is_user=False)
         else:
             self.voice_btn.configure(
-                text="🔇 음성",
+                text="음성",
                 fg_color=COLORS["bg_card"],
                 hover_color=COLORS["primary_dark"],
                 border_color=COLORS["primary"]
