@@ -40,9 +40,103 @@ except ImportError:
     HOTKEY_AVAILABLE = False
 
 import tempfile
+import json
+import webbrowser
 
 # 프로젝트 루트 경로 (먼저 정의)
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+SETTINGS_FILE = os.path.join(PROJECT_ROOT, "configs", "user_settings.json")
+
+
+class SettingsManager:
+    """사용자 설정 관리 클래스"""
+    
+    DEFAULT_SETTINGS = {
+        # 창 크기/위치
+        "window": {
+            "width": 1180,
+            "height": 650,
+            "x": None,  # None이면 중앙
+            "y": None,
+            "side_panel_open": True
+        },
+        # 음성 설정
+        "voice": {
+            "tts_enabled": True,          # TTS 활성화
+            "email_voice_read": True,     # 메일 도착 시 음성으로 읽기
+            "email_voice_response": True, # 메일 알림 후 음성 응답 대기
+            "schedule_voice_read": True,  # 일정 알림 시 음성으로 읽기
+            "volume": 0.8                 # 음량 (0.0 ~ 1.0)
+        },
+        # 알림 설정
+        "notification": {
+            "email_enabled": True,
+            "schedule_enabled": True,
+            "schedule_minutes_before": 10  # 일정 몇 분 전 알림
+        }
+    }
+    
+    def __init__(self):
+        self.settings = self._load_settings()
+    
+    def _load_settings(self) -> dict:
+        """설정 파일 로드"""
+        try:
+            if os.path.exists(SETTINGS_FILE):
+                with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
+                    loaded = json.load(f)
+                    # 기본값과 병합 (새로운 설정이 추가되어도 호환)
+                    return self._merge_settings(self.DEFAULT_SETTINGS.copy(), loaded)
+            return self.DEFAULT_SETTINGS.copy()
+        except Exception as e:
+            print(f"[Settings] 설정 로드 실패: {e}")
+            return self.DEFAULT_SETTINGS.copy()
+    
+    def _merge_settings(self, default: dict, loaded: dict) -> dict:
+        """기본 설정과 로드된 설정 병합"""
+        result = default.copy()
+        for key, value in loaded.items():
+            if key in result:
+                if isinstance(value, dict) and isinstance(result[key], dict):
+                    result[key] = self._merge_settings(result[key], value)
+                else:
+                    result[key] = value
+        return result
+    
+    def save(self):
+        """설정 저장"""
+        try:
+            with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
+                json.dump(self.settings, f, ensure_ascii=False, indent=2)
+            print("[Settings] 설정 저장 완료")
+        except Exception as e:
+            print(f"[Settings] 설정 저장 실패: {e}")
+    
+    def get(self, *keys, default=None):
+        """설정값 가져오기 (중첩 키 지원)"""
+        value = self.settings
+        for key in keys:
+            if isinstance(value, dict) and key in value:
+                value = value[key]
+            else:
+                return default
+        return value
+    
+    def set(self, *keys_and_value):
+        """설정값 설정 (마지막 인자가 값)"""
+        if len(keys_and_value) < 2:
+            return
+        
+        keys = keys_and_value[:-1]
+        value = keys_and_value[-1]
+        
+        current = self.settings
+        for key in keys[:-1]:
+            if key not in current:
+                current[key] = {}
+            current = current[key]
+        
+        current[keys[-1]] = value
 
 # 커스텀 폰트 로드 (경기천년체)
 FONT_LOADED = False
@@ -379,13 +473,23 @@ class SionApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         
-        # 윈도우 설정 (6:4 비율 = 900x600)
+        # 설정 관리자 초기화 (가장 먼저)
+        self.settings = SettingsManager()
+        
+        # 윈도우 설정
         self.title("SION Personal Assistant")
-        self.geometry("900x600")
         self.minsize(600, 400)
         
-        # 화면 중앙에 배치 (패널 열린 상태 기준: 700 + 480 = 1180)
-        self.center_window(1180, 650)
+        # 저장된 창 크기/위치 복원
+        saved_width = self.settings.get("window", "width", default=1180)
+        saved_height = self.settings.get("window", "height", default=650)
+        saved_x = self.settings.get("window", "x")
+        saved_y = self.settings.get("window", "y")
+        
+        if saved_x is not None and saved_y is not None:
+            self.geometry(f"{saved_width}x{saved_height}+{saved_x}+{saved_y}")
+        else:
+            self.center_window(saved_width, saved_height)
         
         # 시작 시 숨김 (스플래시 후 표시)
         self.withdraw()
@@ -410,9 +514,14 @@ class SionApp(ctk.CTk):
         self.service_manager = ServiceManager()
         self.services_ready = False
         
-        # 음성 모드 (TTS 활성화 여부)
-        self.voice_mode = False
+        # 음성 모드 (설정에서 로드)
+        self.voice_mode = self.settings.get("voice", "tts_enabled", default=True)
         self.is_speaking = False
+        
+        # 음량 설정 적용
+        if TTS_AVAILABLE:
+            volume = self.settings.get("voice", "volume", default=0.8)
+            pygame.mixer.music.set_volume(volume)
         
         # 글로벌 핫키 설정
         self.hotkey_registered = False
@@ -440,8 +549,41 @@ class SionApp(ctk.CTk):
         # 글로벌 핫키 등록
         self.register_hotkey()
         
+        # 창 크기 변경 이벤트 바인딩
+        self.bind("<Configure>", self._on_window_configure)
+        self._last_save_time = 0  # 저장 디바운싱용
+        
         # 종료 시 서비스 정리
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
+    
+    def _on_window_configure(self, event):
+        """창 크기/위치 변경 시 설정 저장 (디바운싱)"""
+        if event.widget == self and not self.wm_state() == 'iconic':
+            current_time = time.time()
+            # 0.5초 이내에 중복 저장 방지
+            if current_time - self._last_save_time > 0.5:
+                self._last_save_time = current_time
+                # 실제 저장은 약간의 딜레이 후 (연속 이벤트 대응)
+                self.after(500, self._save_window_geometry)
+    
+    def _save_window_geometry(self):
+        """창 크기/위치 저장"""
+        try:
+            # 최소화 상태가 아닐 때만 저장
+            if self.wm_state() != 'iconic':
+                geometry = self.geometry()
+                # 형식: "WxH+X+Y"
+                size_pos = geometry.replace('x', '+').split('+')
+                if len(size_pos) >= 4:
+                    width, height, x, y = int(size_pos[0]), int(size_pos[1]), int(size_pos[2]), int(size_pos[3])
+                    self.settings.set("window", "width", width)
+                    self.settings.set("window", "height", height)
+                    self.settings.set("window", "x", x)
+                    self.settings.set("window", "y", y)
+                    self.settings.set("window", "side_panel_open", self.side_panel_open)
+                    self.settings.save()
+        except Exception as e:
+            print(f"[Settings] 창 크기 저장 오류: {e}")
     
     def show_splash(self):
         """스플래시 스크린 표시"""
@@ -576,6 +718,22 @@ class SionApp(ctk.CTk):
             text_color="#FFA500"  # 주황색 (로딩 중)
         )
         self.status_label.grid(row=0, column=3, padx=4, pady=18, sticky="e")
+        
+        # 설정 버튼
+        self.settings_btn = ctk.CTkButton(
+            header_frame,
+            text="⚙",
+            width=36,
+            height=36,
+            font=("Segoe UI", 16),
+            fg_color=COLORS["bg_card"],
+            hover_color=COLORS["primary_dark"],
+            corner_radius=18,
+            border_width=1,
+            border_color="#666666",
+            command=self.open_settings
+        )
+        self.settings_btn.grid(row=0, column=4, padx=4, pady=15, sticky="e")
         
         # 사이드 패널 토글 버튼
         self.panel_toggle_btn = ctk.CTkButton(
@@ -890,31 +1048,57 @@ class SionApp(ctk.CTk):
                 time_str = "종일"
             
             title = event.get('title', '제목 없음')
+            event_id = event.get('id', '')
             
             event_frame = ctk.CTkFrame(
                 self.schedule_frame,
                 fg_color=COLORS["bg_dark"],
-                corner_radius=10
+                corner_radius=10,
+                cursor="hand2"  # 클릭 가능 표시
             )
             event_frame.pack(fill="x", pady=5)
+            
+            # 클릭 이벤트 바인딩
+            event_frame.bind("<Button-1>", lambda e, eid=event_id: self._open_calendar_event(eid))
             
             time_label = ctk.CTkLabel(
                 event_frame,
                 text=time_str,
                 font=("경기천년제목 Bold", 12),
                 text_color=COLORS["primary_light"],
-                width=50
+                width=50,
+                cursor="hand2"
             )
             time_label.pack(side="left", padx=(10, 5), pady=8)
+            time_label.bind("<Button-1>", lambda e, eid=event_id: self._open_calendar_event(eid))
             
             title_label = ctk.CTkLabel(
                 event_frame,
                 text=title,
                 font=("경기천년제목 Medium", 12),
                 text_color=COLORS["text_primary"],
-                anchor="w"
+                anchor="w",
+                cursor="hand2"
             )
             title_label.pack(side="left", padx=5, pady=8, fill="x", expand=True)
+            title_label.bind("<Button-1>", lambda e, eid=event_id: self._open_calendar_event(eid))
+            
+            # 호버 효과
+            def on_enter(e, frame=event_frame):
+                frame.configure(fg_color=COLORS["primary_dark"])
+            def on_leave(e, frame=event_frame):
+                frame.configure(fg_color=COLORS["bg_dark"])
+            
+            event_frame.bind("<Enter>", on_enter)
+            event_frame.bind("<Leave>", on_leave)
+    
+    def _open_calendar_event(self, event_id: str):
+        """특정 일정 페이지 열기"""
+        if event_id:
+            url = f"https://calendar.google.com/calendar/r/eventedit/{event_id}"
+            webbrowser.open(url)
+        else:
+            self.open_google_calendar()
     
     def _update_mail_panel(self, emails: list):
         """메일 패널 업데이트"""
@@ -937,33 +1121,60 @@ class SionApp(ctk.CTk):
             if not sender:
                 sender = email.get('from', '알 수 없음')
             subject = email.get('subject', '제목 없음')
+            email_id = email.get('id', '')
+            
             if len(subject) > 25:
                 subject = subject[:25] + "..."
             
             mail_frame = ctk.CTkFrame(
                 self.mail_frame,
                 fg_color=COLORS["bg_dark"],
-                corner_radius=10
+                corner_radius=10,
+                cursor="hand2"  # 클릭 가능 표시
             )
             mail_frame.pack(fill="x", pady=5)
+            
+            # 클릭 이벤트 바인딩
+            mail_frame.bind("<Button-1>", lambda e, mid=email_id: self._open_email(mid))
             
             sender_label = ctk.CTkLabel(
                 mail_frame,
                 text=f"✉️ {sender}",
                 font=("경기천년제목 Medium", 11),
                 text_color=COLORS["primary_light"],
-                anchor="w"
+                anchor="w",
+                cursor="hand2"
             )
             sender_label.pack(anchor="w", padx=10, pady=(8, 2))
+            sender_label.bind("<Button-1>", lambda e, mid=email_id: self._open_email(mid))
             
             subject_label = ctk.CTkLabel(
                 mail_frame,
                 text=subject,
                 font=("경기천년제목 Medium", 12),
                 text_color=COLORS["text_primary"],
-                anchor="w"
+                anchor="w",
+                cursor="hand2"
             )
             subject_label.pack(anchor="w", padx=10, pady=(2, 8))
+            subject_label.bind("<Button-1>", lambda e, mid=email_id: self._open_email(mid))
+            
+            # 호버 효과
+            def on_enter(e, frame=mail_frame):
+                frame.configure(fg_color=COLORS["primary_dark"])
+            def on_leave(e, frame=mail_frame):
+                frame.configure(fg_color=COLORS["bg_dark"])
+            
+            mail_frame.bind("<Enter>", on_enter)
+            mail_frame.bind("<Leave>", on_leave)
+    
+    def _open_email(self, email_id: str):
+        """특정 메일 페이지 열기"""
+        if email_id:
+            url = f"https://mail.google.com/mail/u/0/#inbox/{email_id}"
+            webbrowser.open(url)
+        else:
+            self.open_gmail()
     
     def _fade_in(self, alpha):
         """페이드인 애니메이션"""
@@ -1574,6 +1785,10 @@ class SionApp(ctk.CTk):
         # 캘린더/메일 바로가기 버튼 표시
         self.show_google_shortcuts()
         
+        # 사이드 패널 자동 새로고침
+        if self.side_panel_open:
+            self.after(300, self.refresh_side_panel)
+        
         # 오늘의 브리핑 자동 실행
         self.after(500, self.show_daily_briefing)
         
@@ -1708,6 +1923,10 @@ class SionApp(ctk.CTk):
     
     def _notify_new_email(self, email: dict):
         """새 메일 알림"""
+        # 알림 설정 확인
+        if not self.settings.get("notification", "email_enabled", default=True):
+            return
+        
         if self.waiting_for_response:
             return  # 이미 응답 대기 중이면 스킵
         
@@ -1719,31 +1938,40 @@ class SionApp(ctk.CTk):
         subject = email.get('subject', '제목 없음')
         email_id = email.get('id', '')
         
+        # 음성 응답 대기 여부 확인
+        voice_response_enabled = self.settings.get("voice", "email_voice_response", default=True)
+        
         # 알림 메시지 표시
         notify_msg = f"📬 새 메일이 도착했습니다!\n\n"
         notify_msg += f"보낸 사람: {sender}\n"
-        notify_msg += f"제목: {subject}\n\n"
-        notify_msg += "🎤 '읽어줘', '열어줘', '괜찮아' 중 하나로 응답해주세요."
+        notify_msg += f"제목: {subject}"
+        
+        if voice_response_enabled:
+            notify_msg += "\n\n🎤 '읽어줘', '열어줘', '괜찮아' 중 하나로 응답해주세요."
         
         self.add_message(notify_msg, is_user=False, streaming=True)
         
-        # TTS로 알림
-        if TTS_AVAILABLE:
-            tts_msg = f"메일이 도착했습니다. {sender}님으로부터. 메일을 읽어드릴까요?"
+        # TTS로 알림 (설정 확인)
+        email_voice_read = self.settings.get("voice", "email_voice_read", default=True)
+        if TTS_AVAILABLE and email_voice_read and self.voice_mode:
+            tts_msg = f"메일이 도착했습니다. {sender}님으로부터."
+            if voice_response_enabled:
+                tts_msg += " 메일을 읽어드릴까요?"
             self.speak_text(tts_msg)
         
-        # 응답 대기 상태 설정
-        self.waiting_for_response = True
-        self.pending_notification = {
-            'type': 'email',
-            'data': email,
-            'sender': sender,
-            'subject': subject,
-            'email_id': email_id
-        }
-        
-        # 음성 인식 시작 (TTS 완료 후)
-        self.after(3000, self._start_notification_listening)
+        # 음성 응답 대기 (설정된 경우만)
+        if voice_response_enabled:
+            self.waiting_for_response = True
+            self.pending_notification = {
+                'type': 'email',
+                'data': email,
+                'sender': sender,
+                'subject': subject,
+                'email_id': email_id
+            }
+            
+            # 음성 인식 시작 (TTS 완료 후)
+            self.after(3000, self._start_notification_listening)
     
     def _start_notification_listening(self):
         """알림 응답을 위한 음성 인식 시작"""
@@ -1933,33 +2161,44 @@ class SionApp(ctk.CTk):
     
     def _notify_upcoming_event(self, event: dict, minutes_left: int):
         """다가오는 일정 알림"""
+        # 알림 설정 확인
+        if not self.settings.get("notification", "schedule_enabled", default=True):
+            return
+        
         if self.waiting_for_response:
             return
         
         title = event.get('title', '일정')
         
+        # 음성 응답 대기 여부
+        voice_response_enabled = self.settings.get("voice", "email_voice_response", default=True)  # 같은 설정 사용
+        
         # 알림 메시지 표시
         notify_msg = f"⏰ 일정 알림!\n\n"
-        notify_msg += f"'{title}' 시간이 {minutes_left}분 남았습니다.\n\n"
-        notify_msg += "🎤 '알았어', '열어줘' 중 하나로 응답해주세요."
+        notify_msg += f"'{title}' 시간이 {minutes_left}분 남았습니다."
+        
+        if voice_response_enabled:
+            notify_msg += "\n\n🎤 '알았어', '열어줘' 중 하나로 응답해주세요."
         
         self.add_message(notify_msg, is_user=False, streaming=True)
         
-        # TTS로 알림
-        if TTS_AVAILABLE:
+        # TTS로 알림 (설정 확인)
+        schedule_voice_read = self.settings.get("voice", "schedule_voice_read", default=True)
+        if TTS_AVAILABLE and schedule_voice_read and self.voice_mode:
             tts_msg = f"{title} 일정이 {minutes_left}분 남았습니다."
             self.speak_text(tts_msg)
         
-        # 응답 대기 상태 설정
-        self.waiting_for_response = True
-        self.pending_notification = {
-            'type': 'schedule',
-            'data': event,
-            'title': title
-        }
-        
-        # 음성 인식 시작
-        self.after(3000, self._start_notification_listening)
+        # 음성 응답 대기 (설정된 경우만)
+        if voice_response_enabled:
+            self.waiting_for_response = True
+            self.pending_notification = {
+                'type': 'schedule',
+                'data': event,
+                'title': title
+            }
+            
+            # 음성 인식 시작
+            self.after(3000, self._start_notification_listening)
     
     # ========== 일일 브리핑 ==========
     
@@ -2110,9 +2349,265 @@ class SionApp(ctk.CTk):
     
     def on_closing(self):
         """앱 종료 시"""
+        # 설정 저장
+        self._save_window_geometry()
+        
         # 핫키 해제
         self.unregister_hotkey()
         self.service_manager.stop_all()
+        self.destroy()
+    
+    def open_settings(self):
+        """설정 화면 열기"""
+        SettingsDialog(self, self.settings)
+
+
+class SettingsDialog(ctk.CTkToplevel):
+    """설정 다이얼로그"""
+    
+    def __init__(self, parent, settings: SettingsManager):
+        super().__init__(parent)
+        
+        self.settings = settings
+        self.parent = parent
+        
+        # 창 설정
+        self.title("설정")
+        self.geometry("450x500")
+        self.resizable(False, False)
+        
+        # 모달 창 설정
+        self.transient(parent)
+        self.grab_set()
+        
+        # 배경색
+        self.configure(fg_color=COLORS["bg_dark"])
+        
+        # 중앙 배치
+        self.center_on_parent()
+        
+        # UI 구성
+        self._setup_ui()
+        
+        # ESC로 닫기
+        self.bind("<Escape>", lambda e: self.destroy())
+    
+    def center_on_parent(self):
+        """부모 창 중앙에 배치"""
+        self.update_idletasks()
+        parent_x = self.parent.winfo_x()
+        parent_y = self.parent.winfo_y()
+        parent_w = self.parent.winfo_width()
+        parent_h = self.parent.winfo_height()
+        
+        w = 450
+        h = 500
+        x = parent_x + (parent_w - w) // 2
+        y = parent_y + (parent_h - h) // 2
+        
+        self.geometry(f"{w}x{h}+{x}+{y}")
+    
+    def _setup_ui(self):
+        """설정 UI 구성"""
+        # 메인 컨테이너
+        main_frame = ctk.CTkFrame(self, fg_color="transparent")
+        main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        # 타이틀
+        title = ctk.CTkLabel(
+            main_frame,
+            text="⚙ 설정",
+            font=("경기천년제목 Bold", 24),
+            text_color=COLORS["primary_light"]
+        )
+        title.pack(pady=(0, 20))
+        
+        # === 음성 설정 섹션 ===
+        voice_section = ctk.CTkFrame(main_frame, fg_color=COLORS["bg_card"], corner_radius=15)
+        voice_section.pack(fill="x", pady=10)
+        
+        voice_title = ctk.CTkLabel(
+            voice_section,
+            text="🔊 음성 설정",
+            font=("경기천년제목 Bold", 16),
+            text_color=COLORS["text_primary"]
+        )
+        voice_title.pack(anchor="w", padx=15, pady=(15, 10))
+        
+        # TTS 활성화
+        self.tts_enabled_var = ctk.BooleanVar(value=self.settings.get("voice", "tts_enabled", default=True))
+        tts_switch = ctk.CTkSwitch(
+            voice_section,
+            text="음성 출력 (TTS) 활성화",
+            font=("경기천년제목 Medium", 14),
+            variable=self.tts_enabled_var,
+            onvalue=True,
+            offvalue=False,
+            progress_color=COLORS["primary"],
+            command=self._on_setting_changed
+        )
+        tts_switch.pack(anchor="w", padx=20, pady=5)
+        
+        # 메일 음성 읽기
+        self.email_voice_var = ctk.BooleanVar(value=self.settings.get("voice", "email_voice_read", default=True))
+        email_voice_switch = ctk.CTkSwitch(
+            voice_section,
+            text="메일 도착 시 음성으로 알림",
+            font=("경기천년제목 Medium", 14),
+            variable=self.email_voice_var,
+            onvalue=True,
+            offvalue=False,
+            progress_color=COLORS["primary"],
+            command=self._on_setting_changed
+        )
+        email_voice_switch.pack(anchor="w", padx=20, pady=5)
+        
+        # 메일 응답 대기
+        self.email_response_var = ctk.BooleanVar(value=self.settings.get("voice", "email_voice_response", default=True))
+        email_response_switch = ctk.CTkSwitch(
+            voice_section,
+            text="메일 알림 후 음성 응답 대기",
+            font=("경기천년제목 Medium", 14),
+            variable=self.email_response_var,
+            onvalue=True,
+            offvalue=False,
+            progress_color=COLORS["primary"],
+            command=self._on_setting_changed
+        )
+        email_response_switch.pack(anchor="w", padx=20, pady=5)
+        
+        # 일정 음성 알림
+        self.schedule_voice_var = ctk.BooleanVar(value=self.settings.get("voice", "schedule_voice_read", default=True))
+        schedule_voice_switch = ctk.CTkSwitch(
+            voice_section,
+            text="일정 알림 시 음성으로 알림",
+            font=("경기천년제목 Medium", 14),
+            variable=self.schedule_voice_var,
+            onvalue=True,
+            offvalue=False,
+            progress_color=COLORS["primary"],
+            command=self._on_setting_changed
+        )
+        schedule_voice_switch.pack(anchor="w", padx=20, pady=(5, 10))
+        
+        # 음량 조절
+        volume_frame = ctk.CTkFrame(voice_section, fg_color="transparent")
+        volume_frame.pack(fill="x", padx=20, pady=(5, 15))
+        
+        volume_label = ctk.CTkLabel(
+            volume_frame,
+            text="음량:",
+            font=("경기천년제목 Medium", 14),
+            text_color=COLORS["text_primary"]
+        )
+        volume_label.pack(side="left", padx=(0, 10))
+        
+        current_volume = self.settings.get("voice", "volume", default=0.8)
+        self.volume_var = ctk.DoubleVar(value=current_volume)
+        
+        volume_slider = ctk.CTkSlider(
+            volume_frame,
+            from_=0.0,
+            to=1.0,
+            variable=self.volume_var,
+            progress_color=COLORS["primary"],
+            button_color=COLORS["primary_light"],
+            button_hover_color=COLORS["accent"],
+            command=self._on_volume_changed
+        )
+        volume_slider.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        
+        self.volume_value_label = ctk.CTkLabel(
+            volume_frame,
+            text=f"{int(current_volume * 100)}%",
+            font=("경기천년제목 Medium", 12),
+            text_color=COLORS["text_secondary"],
+            width=40
+        )
+        self.volume_value_label.pack(side="left")
+        
+        # === 알림 설정 섹션 ===
+        notify_section = ctk.CTkFrame(main_frame, fg_color=COLORS["bg_card"], corner_radius=15)
+        notify_section.pack(fill="x", pady=10)
+        
+        notify_title = ctk.CTkLabel(
+            notify_section,
+            text="🔔 알림 설정",
+            font=("경기천년제목 Bold", 16),
+            text_color=COLORS["text_primary"]
+        )
+        notify_title.pack(anchor="w", padx=15, pady=(15, 10))
+        
+        # 메일 알림
+        self.email_notify_var = ctk.BooleanVar(value=self.settings.get("notification", "email_enabled", default=True))
+        email_notify_switch = ctk.CTkSwitch(
+            notify_section,
+            text="새 메일 알림",
+            font=("경기천년제목 Medium", 14),
+            variable=self.email_notify_var,
+            onvalue=True,
+            offvalue=False,
+            progress_color=COLORS["primary"],
+            command=self._on_setting_changed
+        )
+        email_notify_switch.pack(anchor="w", padx=20, pady=5)
+        
+        # 일정 알림
+        self.schedule_notify_var = ctk.BooleanVar(value=self.settings.get("notification", "schedule_enabled", default=True))
+        schedule_notify_switch = ctk.CTkSwitch(
+            notify_section,
+            text="일정 알림",
+            font=("경기천년제목 Medium", 14),
+            variable=self.schedule_notify_var,
+            onvalue=True,
+            offvalue=False,
+            progress_color=COLORS["primary"],
+            command=self._on_setting_changed
+        )
+        schedule_notify_switch.pack(anchor="w", padx=20, pady=(5, 15))
+        
+        # 저장 버튼
+        save_btn = ctk.CTkButton(
+            main_frame,
+            text="💾 저장",
+            height=45,
+            font=("경기천년제목 Bold", 16),
+            fg_color=COLORS["primary"],
+            hover_color=COLORS["primary_dark"],
+            corner_radius=22,
+            command=self._save_and_close
+        )
+        save_btn.pack(pady=20)
+    
+    def _on_setting_changed(self):
+        """설정 변경 시"""
+        pass  # 실시간 업데이트 없이 저장 버튼 클릭 시 저장
+    
+    def _on_volume_changed(self, value):
+        """음량 변경 시"""
+        self.volume_value_label.configure(text=f"{int(value * 100)}%")
+        # 실시간 음량 적용
+        if TTS_AVAILABLE:
+            pygame.mixer.music.set_volume(value)
+    
+    def _save_and_close(self):
+        """설정 저장 후 닫기"""
+        # 설정 저장
+        self.settings.set("voice", "tts_enabled", self.tts_enabled_var.get())
+        self.settings.set("voice", "email_voice_read", self.email_voice_var.get())
+        self.settings.set("voice", "email_voice_response", self.email_response_var.get())
+        self.settings.set("voice", "schedule_voice_read", self.schedule_voice_var.get())
+        self.settings.set("voice", "volume", self.volume_var.get())
+        self.settings.set("notification", "email_enabled", self.email_notify_var.get())
+        self.settings.set("notification", "schedule_enabled", self.schedule_notify_var.get())
+        
+        self.settings.save()
+        
+        # 부모 앱에 설정 적용
+        self.parent.voice_mode = self.tts_enabled_var.get()
+        self.parent._update_voice_button_text()
+        
+        # 닫기
         self.destroy()
 
 
