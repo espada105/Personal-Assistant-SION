@@ -1722,29 +1722,41 @@ class SionApp(ctk.CTk):
     def try_auto_login(self):
         """앱 시작 시 자동 로그인 시도"""
         if not GOOGLE_AVAILABLE:
+            print("[AutoLogin] GOOGLE_AVAILABLE = False")
             return
         
         def do_auto_login():
             try:
                 auth_manager = get_auth_manager()
+                print(f"[AutoLogin] creds exists: {auth_manager.creds is not None}")
+                
+                if auth_manager.creds:
+                    print(f"[AutoLogin] creds.valid: {auth_manager.creds.valid}")
+                    print(f"[AutoLogin] creds.expired: {auth_manager.creds.expired}")
+                    print(f"[AutoLogin] has refresh_token: {auth_manager.creds.refresh_token is not None}")
                 
                 # 이미 유효한 토큰이 있는지 확인
                 if auth_manager.is_authenticated():
-                    # 이미 로그인됨
+                    print("[AutoLogin] 이미 인증됨 - 성공")
                     self.after(0, self._on_auto_login_success)
                     return
                 
-                # 토큰이 만료되었지만 갱신 가능한 경우
-                if auth_manager.creds and auth_manager.creds.expired and auth_manager.creds.refresh_token:
+                # 토큰이 있고 갱신 가능한 경우 (만료 여부와 관계없이 시도)
+                if auth_manager.creds and auth_manager.creds.refresh_token:
+                    print("[AutoLogin] 토큰 갱신 시도...")
                     self.after(0, lambda: self.add_message(
                         "🔄 Google 인증 갱신 중...",
                         is_user=False
                     ))
                     if auth_manager.authenticate():
+                        print("[AutoLogin] 토큰 갱신 성공")
                         self.after(0, self._on_auto_login_success)
                         return
+                    else:
+                        print("[AutoLogin] 토큰 갱신 실패")
                 
                 # 자동 로그인 실패 - 수동 로그인 안내
+                print("[AutoLogin] 수동 로그인 필요")
                 tip = ""
                 if HOTKEY_AVAILABLE:
                     tip = f"\n\n💡 Tip: {self.hotkey_combo.upper()} 키로 어디서든 호출 가능!"

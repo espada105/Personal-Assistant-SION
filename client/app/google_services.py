@@ -47,15 +47,24 @@ class GoogleAuthManager:
     def authenticate(self) -> bool:
         """Google OAuth 인증 수행"""
         try:
-            # 토큰이 만료되었으면 갱신
-            if self.creds and self.creds.expired and self.creds.refresh_token:
-                self.creds.refresh(Request())
-            else:
-                # 새로운 인증 수행
+            # 토큰이 있고 갱신 토큰이 있는 경우 갱신 시도
+            if self.creds and self.creds.refresh_token:
+                try:
+                    print("[GoogleAuth] 토큰 갱신 시도...")
+                    self.creds.refresh(Request())
+                    print("[GoogleAuth] 토큰 갱신 성공!")
+                except Exception as refresh_error:
+                    print(f"[GoogleAuth] 토큰 갱신 실패: {refresh_error}")
+                    # 갱신 실패 시 새로운 인증 수행
+                    self.creds = None
+            
+            # 토큰이 없으면 새로운 인증 수행
+            if not self.creds or not self.creds.valid:
                 if not os.path.exists(CREDENTIALS_PATH):
                     print(f"[GoogleAuth] credentials 파일을 찾을 수 없습니다: {CREDENTIALS_PATH}")
                     return False
                 
+                print("[GoogleAuth] 새로운 인증 수행...")
                 flow = InstalledAppFlow.from_client_secrets_file(
                     CREDENTIALS_PATH, SCOPES
                 )
