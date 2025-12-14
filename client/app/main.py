@@ -2373,7 +2373,7 @@ class SettingsDialog(ctk.CTkToplevel):
         
         # 창 설정
         self.title("설정")
-        self.geometry("450x500")
+        self.geometry("450x530")
         self.resizable(False, False)
         
         # 모달 창 설정
@@ -2401,7 +2401,7 @@ class SettingsDialog(ctk.CTkToplevel):
         parent_h = self.parent.winfo_height()
         
         w = 450
-        h = 500
+        h = 530
         x = parent_x + (parent_w - w) // 2
         y = parent_y + (parent_h - h) // 2
         
