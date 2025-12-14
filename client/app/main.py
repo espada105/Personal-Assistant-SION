@@ -552,12 +552,20 @@ class SionApp(ctk.CTk):
         # 창 크기 변경 이벤트 바인딩
         self.bind("<Configure>", self._on_window_configure)
         self._last_save_time = 0  # 저장 디바운싱용
+        self._startup_complete = False  # 시작 완료 플래그 (시작 중에는 저장 안 함)
+        
+        # 저장된 사이드 패널 상태
+        self._saved_side_panel_open = self.settings.get("window", "side_panel_open", default=True)
         
         # 종료 시 서비스 정리
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
     
     def _on_window_configure(self, event):
         """창 크기/위치 변경 시 설정 저장 (디바운싱)"""
+        # 시작 완료 전에는 저장하지 않음
+        if not self._startup_complete:
+            return
+        
         if event.widget == self and not self.wm_state() == 'iconic':
             current_time = time.time()
             # 0.5초 이내에 중복 저장 방지
@@ -602,11 +610,23 @@ class SionApp(ctk.CTk):
         self.lift()
         self.focus_force()
         
-        # 사이드 패널 기본으로 열기
-        self._open_side_panel_default()
+        # 저장된 사이드 패널 상태 복원
+        if self._saved_side_panel_open:
+            self._open_side_panel_default()
+        else:
+            self.side_panel_open = False
+            self.panel_toggle_btn.configure(text="◀")
+        
+        # 시작 완료 플래그 설정 (이제부터 창 크기 저장 가능)
+        self.after(1000, self._mark_startup_complete)
         
         # 자동 로그인 시도
         self.after(500, self.try_auto_login)
+    
+    def _mark_startup_complete(self):
+        """시작 완료 표시"""
+        self._startup_complete = True
+        print("[Startup] 앱 시작 완료 - 창 크기 저장 활성화")
     
     def center_window(self, width, height):
         """창을 화면 중앙에 배치"""
