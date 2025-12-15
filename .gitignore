@@ -168,7 +168,11 @@ configs/google_credentials.json
 client_secret*.json
 token.json
 /configs/경기천년체_220929
-voice/README.md
 /voice/output
 /voice/reference_audio
+/voice/models
+/voice/logs
+/voice/training_data
 /xtts_env
+/GPT-SoVITS
+/configs/user_settings.json

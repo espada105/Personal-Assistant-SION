@@ -1,0 +1,115 @@
+# SION Voice Cloning Configuration
+# 교차언어 음성 클로닝 설정
+
+# 기본 설정
+general:
+  device: "cuda"  # cuda, cpu, mps
+  dtype: "float16"  # float16, float32
+  seed: 42
+
+# 모델 설정
+model:
+  # GPT 모델
+  gpt:
+    pretrained_path: "models/gpt/pretrained.ckpt"
+    custom_path: "models/gpt/s1v3.ckpt"  # HuggingFace lj1995/GPT-SoVITS s1v3.ckpt
+  
+  # SoVITS 모델
+  sovits:
+    pretrained_path: "models/sovits/pretrained.pth"
+    custom_path: "models/sovits/s2Gv4.pth"  # HuggingFace lj1995/GPT-SoVITS gsv-v4-pretrained/s2Gv4.pth
+
+# 참조 음성 설정
+reference:
+  # 기본 참조 음성
+  default_speaker: "speaker_1"
+  audio_dir: "reference_audio"
+  
+  # 화자 설정
+  speakers:
+    speaker_1:
+      name: "시온"
+      language: "ja"  # 원본 언어 (일본어)
+      reference_audio: "speaker_1/sample.wav"
+      reference_text: "こんにちは、私はシオンです。"  # 참조 음성의 대본
+      description: "일본 성우 음성"
+
+# 합성 설정
+synthesis:
+  # 출력 설정
+  output:
+    sample_rate: 44100
+    format: "wav"
+    directory: "output"
+  
+  # 한국어 발화 설정
+  korean:
+    # G2P (Grapheme-to-Phoneme) 설정
+    use_g2pk: true
+    
+    # 발음 조정
+    speed: 1.0  # 0.5 ~ 2.0
+    pitch_shift: 0  # -12 ~ 12 semitones
+    
+  # 교차언어 설정
+  cross_lingual:
+    source_language: "ja"  # 참조 음성 언어
+    target_language: "ko"  # 합성 언어
+    
+    # 억양 보존 정도 (0.0 ~ 1.0)
+    # 높을수록 원본 억양 유지, 낮을수록 타겟 언어 억양
+    accent_preservation: 0.3
+
+# 추론 설정
+inference:
+  # 배치 설정
+  batch_size: 1
+  
+  # Top-K / Top-P 샘플링
+  top_k: 15
+  top_p: 0.9
+  temperature: 0.8
+  
+  # 반복 페널티
+  repetition_penalty: 1.35
+  
+  # 최대 길이
+  max_length: 1024
+
+# 학습 설정 (fine-tuning용)
+training:
+  # 데이터 설정
+  data:
+    raw_audio_dir: "training_data/raw"
+    processed_dir: "training_data/processed"
+    min_audio_length: 3.0  # 최소 3초
+    max_audio_length: 30.0  # 최대 30초
+  
+  # GPT 학습
+  gpt:
+    epochs: 15
+    batch_size: 4
+    learning_rate: 0.0001
+    save_every: 5
+  
+  # SoVITS 학습
+  sovits:
+    epochs: 8
+    batch_size: 8
+    learning_rate: 0.0001
+    save_every: 4
+
+# API 서버 설정
+api:
+  host: "127.0.0.1"
+  port: 9880
+  cors_origins:
+    - "http://localhost:3000"
+    - "http://127.0.0.1:3000"
+
+# 로깅 설정
+logging:
+  level: "INFO"
+  file: "logs/voice_cloning.log"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
