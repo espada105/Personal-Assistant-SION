@@ -1688,53 +1688,76 @@ class SionApp(ctk.CTk):
             self.add_message("🔇 음성 모드가 비활성화되었습니다.", is_user=False)
     
     def speak_text(self, text: str):
-        """텍스트를 음성으로 읽기 (edge-tts 사용)"""
-        if not TTS_AVAILABLE or not self.voice_mode or self.is_speaking:
+        """텍스트를 음성으로 읽기 (XTTS 서버 → edge-tts 폴백)"""
+        if not self.voice_mode or self.is_speaking:
             return
         
         def do_speak():
             self.is_speaking = True
+            audio_path = None
             try:
-                # 이모지 및 특수문자 제거 (TTS가 읽기 어려운 것들)
                 import re
                 clean_text = re.sub(r'[📅📆🕐✅❌🔗💬📧🎤🔴🔊🔇•]', '', text)
-                clean_text = re.sub(r'\n+', '. ', clean_text)
-                clean_text = clean_text.strip()
-                
+                clean_text = re.sub(r'\n+', '. ', clean_text).strip()
                 if not clean_text:
                     return
-                
-                # edge-tts로 음성 생성 (한국어 여성 음성)
-                async def generate_speech():
-                    communicate = edge_tts.Communicate(clean_text, "ko-KR-SunHiNeural")
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_file:
-                        tmp_path = tmp_file.name
-                    await communicate.save(tmp_path)
-                    return tmp_path
-                
-                # 비동기 실행
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                audio_path = loop.run_until_complete(generate_speech())
-                loop.close()
-                
-                # pygame으로 재생
+
+                # 1) XTTS HTTP 서버 시도 (Python 3.10 venv에서 voice/xtts_server.py 실행 필요)
+                try:
+                    api_url = "http://127.0.0.1:9882/tts"
+                    ref_path = os.path.join(PROJECT_ROOT, "voice", "reference_audio", "speaker_1", "3.wav")
+                    payload = {
+                        "text": clean_text,
+                        "ref_path": ref_path,
+                        "language": "ko",
+                    }
+                    resp = requests.post(api_url, json=payload, timeout=15)
+                    if resp.ok and resp.content:
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+                            tmp.write(resp.content)
+                            audio_path = tmp.name
+                        print("[TTS] XTTS 서버 사용")
+                    else:
+                        print(f"[TTS] XTTS 서버 응답 오류: {resp.status_code}")
+                        audio_path = None
+                except Exception as xtts_err:
+                    print(f"[TTS] XTTS 서버 실패: {xtts_err}")
+                    audio_path = None
+
+                # 2) edge-tts 폴백
+                if audio_path is None and TTS_AVAILABLE:
+                    async def generate_speech():
+                        communicate = edge_tts.Communicate(clean_text, "ko-KR-SunHiNeural")
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_file:
+                            tmp_path = tmp_file.name
+                        await communicate.save(tmp_path)
+                        return tmp_path
+                    
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    audio_path = loop.run_until_complete(generate_speech())
+                    loop.close()
+                    print("[TTS] edge-tts 폴백 사용")
+
+                if audio_path is None:
+                    print("[TTS] 합성 실패: audio_path 없음")
+                    return
+
+                # 재생
                 pygame.mixer.music.load(audio_path)
                 pygame.mixer.music.play()
-                
-                # 재생 완료 대기
                 while pygame.mixer.music.get_busy():
                     time.sleep(0.1)
-                
-                # 임시 파일 삭제
-                try:
-                    os.remove(audio_path)
-                except:
-                    pass
-                    
+
             except Exception as e:
                 print(f"[TTS] 음성 출력 오류: {e}")
             finally:
+                # 임시 파일 삭제
+                try:
+                    if audio_path and os.path.exists(audio_path):
+                        os.remove(audio_path)
+                except Exception:
+                    pass
                 self.is_speaking = False
         
         threading.Thread(target=do_speak, daemon=True).start()
